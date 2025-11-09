@@ -1,0 +1,1259 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>IHA Telemetri Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+  :root{
+    --bg:#0b0e11;
+    --card:#11151a;
+    --muted:#9aa3ad;
+    --line:#222831;
+    --fg:#e5e7eb;
+    --ok:#22c55e;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--fg);
+    font:14px/1.45 system-ui,Segoe UI,Arial
+  }
+
+  h1,h2{margin:0 0 12px}
+  .wrap{padding:20px;display:grid;gap:16px}
+  .row{display:grid;gap:16px;grid-template-columns:1fr 1fr}
+  .card{
+    background:var(--card);
+    border-radius:14px;
+    padding:14px;
+    box-shadow:0 2px 10px rgba(0,0,0,.25)
+  }
+  .muted{color:var(--muted);font-size:12px}
+  table{border-collapse:collapse;width:100%}
+  th,td{
+    border-bottom:1px solid var(--line);
+    padding:8px 6px;
+    text-align:left
+  }
+  th{color:#a3aab3;font-weight:600}
+  .online{color:var(--ok);font-weight:700}
+  .offline{color:#9ca3af}
+  pre{
+    white-space:pre-wrap;
+    word-break:break-word;
+    max-height:200px;
+    overflow:auto;
+    background:#0f1318;
+    border-radius:12px;
+    padding:10px
+  }
+  @media (max-width:1100px){.row{grid-template-columns:1fr}}
+  .leaflet-container { background: #0f1318;
+
+  #liveMap { height: 420px; width: 100%; }
+  .fence-label{
+    background: rgba(255,255,255,0.95) !important ;   /* açık beyaz kutu */
+    color: #000 !important ;                          /* siyah yazı */
+    border: 1px solid #ef4444;            /* kırmızı çerçeve */
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+    font-weight: 600;
+    text-shadow: none;                    /* beyaz kutuda gölge istemiyoruz */
+  }
+
+
+</style>
+
+
+   <!-- Leaflet CSS & JS -->
+  <link
+    rel="stylesheet"
+    href="/static/leaflet/leaflet.css"
+  />
+  <script
+    src="/static/leaflet/leaflet.js">
+  </script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+
+</head>
+<body>
+  <div class="wrap">
+    <div>
+      <h1>IHA Telemetri Dashboard</h1>
+      <div class="muted">Anlık veri (Socket.IO) • Son olay: <span id="lastEvent">—</span></div>
+    </div>
+
+
+      <div class="card">
+        <h2>Son Paket (Ham)</h2>
+        <pre id="rawbox">{}</pre>
+      </div>
+    </div>
+      <div id="fenceWarn" class="card" style="display:none;background:#2b0e10;border:1px solid #ef4444">
+        <b>Geofence ihlali!</b> Kendi İHA dikdörtgen dışında.
+        <span id="fenceWarnTime"></span>
+        <span id="fenceOutsideInfo" style="opacity:.85"></span>
+      </div>
+
+
+      <div class="card">
+        <h2>Canlı Harita</h2>
+        <div id="liveMap" style="height:420px;border-radius:12px;overflow:hidden"></div>
+        <div class="muted">Kendi İHA: mavi • Düşmanlar: kırmızı • HSS: mor daire</div>
+      </div>
+
+      <div class="row">
+      <div class="card">
+        <h2>Bağlı İHA'lar</h2>
+        <table id="ihatable">
+          <thead>
+            <tr>
+              <th>Takım</th><th>Durum</th><th>GPS Zamanı</th>
+              <th>Lat, Lon</th><th>İrtifa</th><th>Hız</th><th>Yaw</th><th>Batarya</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+    <div class="card">
+      <h2>Son Düşman Listesi</h2>
+      <table id="enemyTable">
+        <thead>
+          <tr><th>Attacker</th><th>Enemy Team</th><th>Lat, Lon</th><th>Alt</th><th>Hız</th><th>Yaw</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+
+
+      <div class="card">
+      <h2>Kilitlenmeler</h2>
+      <table id="locksTable">
+        <thead>
+          <tr>
+            <th>Zaman (UTC)</th>
+            <th>Kilitleyen</th>
+            <th>Kilitlenen</th>
+            <th>Otonom</th>
+            <th>GPS Bitiş</th>
+            <th>Hedef X</th>
+            <th>Hedef Y</th>
+            <th>Genişlik</th>
+            <th>Yükseklik</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="muted">Not: kilitlenen takım gönderilmezse “bilinmiyor” görünür.</div>
+    </div>
+
+
+  <div class="card">
+      <h2>Kamikaze Bildirimleri</h2>
+      <table id="kzLiveTable">
+        <thead>
+          <tr>
+            <th>UTC Zaman</th>
+            <th>Takım</th>
+            <th>QR Metni</th>
+            <th>Kamikaze Başlangıç Zamanı</th>
+            <th>Kamikaze Bitiş Zamanı</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div class="muted">Kamikaze, yarışma paket formatındaki alanlarla canlı yayınlanır ve DB’ye kaydedilir.</div>
+    </div>
+
+
+
+        <div class="card">
+        <h2>Geçmiş Telemetri</h2>
+        <div class="filter-row">
+          <label>Takım
+            <input id="f_team" type="number" placeholder="örn. 25">
+          </label>
+          <label>Başlangıç (UTC ISO)
+            <input id="f_start" type="text" placeholder="2025-10-21T00:00:00Z">
+          </label>
+          <label>Bitiş (UTC ISO)
+            <input id="f_end" type="text" placeholder="2025-10-22T00:00:00Z">
+          </label>
+          <label>Limit
+            <input id="f_limit" type="number" value="500" min="1" max="50000">
+          </label>
+          <button id="btnQuery">Sorgula</button>
+          <button id="btnCsv" disabled>CSV indir</button>
+          </div>
+
+          <div class="muted">Tarih alanlarını boş bırakırsan tamamı (limit kadar) gelir. Saatler UTC’dir.</div>
+
+          <table id="histTable">
+          <thead>
+            <tr>
+              <th>UTC Zaman</th><th>Takım</th><th>Lat</th><th>Lon</th><th>İrtifa</th><th>Hız</th><th>Batarya</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+          </table>
+          <div id="histInfo" class="muted"></div>
+          </div>
+
+
+          <div class="card">
+            <h2>Geçmiş Kilitlenmeler</h2>
+          <label>Kilitleyen (kaynak)
+            <input id="lk_src" type="number" placeholder="örn. 25" style="width:110px;">
+          </label>
+          <label>Kilitlenen
+            <input id="lk_dst" type="number" placeholder="örn. 7" style="width:110px;">
+          </label>
+          <label>Başlangıç (UTC ISO)
+            <input id="lk_start" type="text" placeholder="2025-10-21T00:00:00Z" style="width:210px;">
+          </label>
+          <label>Bitiş (UTC ISO)
+            <input id="lk_end" type="text" placeholder="2025-10-22T00:00:00Z" style="width:210px;">
+          </label>
+          <label>Limit
+            <input id="lk_limit" type="number" value="500" min="1" max="50000" style="width:110px;">
+          </label>
+          <button id="btnLocksQuery">Sorgula</button>
+          <button id="btnLocksCsv" disabled>CSV indir</button>
+
+          <div id="locksInfo" class="muted" style="margin-top:6px;">Filtreleri boş bırakabilirsin. Saatler UTC’dir.</div>
+
+        <table id="locksHistTable" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>UTC Zaman</th>
+              <th>Kilitleyen</th>
+              <th>Kilitlenen</th>
+              <th>Otonom</th>
+              <th>GPS Bitiş</th>
+              <th>Hedef X</th>
+              <th>Hedef Y</th>
+              <th>Genişlik</th>
+              <th>Yükseklik</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        </div>
+
+        <div class="card">
+        <h2>Geçmiş Kamikaze</h2>
+          <label>Kaynak Takım
+            <input id="kz_src" type="number" placeholder="örn. 25" style="width:110px;">
+          </label>
+          <label>Başlangıç (UTC ISO)
+            <input id="kz_start" type="text" placeholder="2025-10-21T00:00:00Z" style="width:210px;">
+          </label>
+          <label>Bitiş (UTC ISO)
+            <input id="kz_end" type="text" placeholder="2025-10-22T00:00:00Z" style="width:210px;">
+          </label>
+          <label>Limit
+            <input id="kz_limit" type="number" value="500" min="1" max="50000" style="width:110px;">
+          </label>
+          <button id="btnKzQuery">Sorgula</button>
+          <button id="btnKzCsv" disabled>CSV indir</button>
+
+        <div id="kzInfo" class="muted" style="margin-top:6px;">Filtreleri boş bırakabilirsin. Saatler UTC’dir.</div>
+
+        <table id="kzHistTable" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th>UTC Zaman</th>
+              <th>Takım</th>
+              <th>QR Metni</th>
+              <th>Kamikaze Başlangıç Zamanı</th>
+              <th>Kamikaze Bitiş Zamanı</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        </div>
+        </div>
+
+
+
+
+
+<script src="/static/socket.io.min.js"></script>
+<script>
+  // Güvenli "Son olay" güncelleyici (eleman yoksa hata vermesin)
+  const LE = document.getElementById('lastEvent');
+  const setLE = (txt) => { if (LE) LE.textContent = txt; };
+
+  // aynı origin’e otomatik bağlanır
+  const socket = io({
+    path: "/socket.io",
+    transports: ["polling"]
+  });
+
+  socket.on('connect',      () => setLE("bağlandı"));
+  socket.on('disconnect',   () => setLE("bağlantı koptu"));
+  socket.on('connect_error',(err)=> { setLE("hata: " + (err?.message || err)); console.log(err); });
+
+  // ---- Tablolar için durum ----
+  const state = new Map(); // team -> {takim, telemetry, _ts}
+  const tableBody = document.querySelector("#ihatable tbody");
+  const rawbox = document.getElementById("rawbox");
+  const enemyBody = document.querySelector("#enemyTable tbody");
+
+  function fmtGps(gps){
+    if(!gps) return "—";
+    const h = String(gps.saat ?? "--").padStart(2, "0");
+    const m = String(gps.dakika ?? "--").padStart(2, "0");
+    const s = String(gps.saniye ?? "--").padStart(2, "0");
+    const ms = String(gps.milisaniye ?? "--");
+    return `${h}:${m}:${s}.${ms}`;
+  }
+
+  function renderTeams(){
+    tableBody.innerHTML = "";
+    const now = Date.now();
+    const rows = Array.from(state.values()).sort((a,b)=> (b._ts||0)-(a._ts||0));
+    rows.forEach(row=>{
+      const t = row.telemetry || {};
+      const online = (now - (row._ts||0)) < 5000;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.takim}</td>
+        <td class="${online?'online':'offline'}">${online?'Online':'Offline'}</td>
+        <td>${fmtGps(t.gps_saati)}</td>
+        <td>${t.iha_enlem??''}, ${t.iha_boylam??''}</td>
+        <td>${t.iha_irtifa??''}</td>
+        <td>${t.iha_hiz??''}</td>
+        <td>${t.iha_yonelme??''}</td>
+        <td>${t.iha_batarya??''}%</td>
+      `;
+      tableBody.appendChild(tr);
+    });
+  }
+
+  function renderEnemies(attacker, enemies){
+    enemyBody.innerHTML = "";
+    (enemies || []).forEach(e=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${attacker}</td>
+        <td>${e.takim_numarasi}</td>
+        <td>${e.iha_enlem}, ${e.iha_boylam}</td>
+        <td>${e.iha_irtifa}</td>
+        <td>${e.iha_hiz}</td>
+        <td>${e.iha_yonelme}</td>
+      `;
+      enemyBody.appendChild(tr);
+    });
+  }
+
+  // 📡 Sunucudan yayınlanan telemetri
+  socket.on('telemetry_update', data=>{
+    const {takim, telemetry, sunucusaati, enemies} = data;
+    state.set(takim, { takim, telemetry, _ts: Date.now() });
+    renderTeams();
+    renderEnemies(takim, enemies);
+    if (rawbox) rawbox.textContent = JSON.stringify({takim, telemetry, sunucusaati}, null, 2);
+    setLE(new Date().toLocaleTimeString());
+  });
+</script>
+
+<script>
+  // --- Canlı KİLİTLENME tablosu ---
+  const locksBody = document.querySelector("#locksTable tbody");
+
+  function pad2(n){ return String(n ?? "--").padStart(2,'0'); }
+  // Telemetri tarafında zaten fmtGps var; kilit ekranında da onu kullanabiliriz.
+  function fmtGpsLock(gps){
+    if(!gps) return '—';
+    return `${pad2(gps.saat)}:${pad2(gps.dakika)}:${pad2(gps.saniye)}.${gps.milisaniye ?? '000'}`;
+  }
+  function humanUTCNow(){
+    return new Date().toISOString().replace('T',' ').replace('Z','');
+  }
+  function show(val, fallback='bilinmiyor'){
+    return (val === null || val === undefined || val === '') ? fallback : val;
+  }
+
+  socket.on('lock_event', (e) => {
+    if (!locksBody) return;
+    const tr = document.createElement('tr');
+    const hedefTxt = show(e.kilitlenen_takim);
+    const hedefClass = (hedefTxt === 'bilinmiyor') ? 'offline' : '';
+    tr.innerHTML = `
+      <td>${humanUTCNow()}</td>
+      <td>${show(e.kaynak_takim)}</td>
+      <td class="${hedefClass}">${hedefTxt}</td>
+      <td>${e.otonom_kilitlenme ? 'Evet' : 'Hayır'}</td>
+      <td>${fmtGpsLock(e.kilit_bitis_gps)}</td>
+      <td>${e.hedef_merkez_X ?? '—'}</td>
+      <td>${e.hedef_merkez_Y ?? '—'}</td>
+      <td>${e.hedef_genislik ?? '—'}</td>
+      <td>${e.hedef_yukseklik ?? '—'}</td>
+    `;
+    locksBody.prepend(tr);
+    const LE = document.getElementById('lastEvent');
+    if (LE) LE.textContent = new Date().toLocaleTimeString();
+  });
+
+
+  // =============================
+  // Geçmiş TELEMETRİ (CSV dahil)
+  // =============================
+  const fTeam  = document.getElementById("f_team");
+  const fStart = document.getElementById("f_start");
+  const fEnd   = document.getElementById("f_end");
+  const fLimit = document.getElementById("f_limit");
+  const btnQ   = document.getElementById("btnQuery");
+  const btnCsv = document.getElementById("btnCsv");
+  const histBody = document.querySelector("#histTable tbody");
+  const histInfo = document.getElementById("histInfo");
+
+  let lastRows = []; // telemetri sonuçları (CSV için saklanır)
+
+  function renderHistory(rows){
+    if (!histBody) return;
+    histBody.innerHTML = "";
+    (rows || []).forEach(r=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${r.ts_utc}</td>
+        <td>${r.takim}</td>
+        <td>${r.enlem}</td>
+        <td>${r.boylam}</td>
+        <td>${r.irtifa}</td>
+        <td>${r.hiz}</td>
+        <td>${r.batarya}</td>
+      `;
+      histBody.appendChild(tr);
+    });
+    if (histInfo) histInfo.textContent = `${rows.length} kayıt listelendi.`;
+    if (btnCsv) btnCsv.disabled = rows.length === 0;
+  }
+
+  function toCSV(rows){
+    const header = ["ts_utc","takim","enlem","boylam","irtifa","hiz","batarya"];
+    const lines = [header.join(",")];
+    rows.forEach(r=>{
+      const vals = header.map(k => (r[k] ?? ""));
+      lines.push(vals.map(v=>{
+        const s = String(v);
+        return (s.includes(",") || s.includes('"') || s.includes("\n"))
+          ? `"${s.replace(/"/g,'""')}"`
+          : s;
+      }).join(","));
+    });
+    return lines.join("\n");
+  }
+
+  function downloadCSV(filename, content){
+    const blob = new Blob([content], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+  }
+
+  if (btnQ){
+    btnQ.addEventListener('click', ()=>{
+      const payload = {
+        takim: (fTeam && fTeam.value) ? fTeam.value : null,
+        start: (fStart && fStart.value) ? fStart.value : null,
+        end:   (fEnd   && fEnd.value)   ? fEnd.value   : null,
+        limit: (fLimit && fLimit.value) ? parseInt(fLimit.value,10) : 500
+      };
+      socket.emit('fetch_history', payload);   // <-- Sunucu: on_fetch_history
+      if (histInfo) histInfo.textContent = "Sorgulanıyor...";
+    });
+  }
+
+  if (btnCsv){
+    btnCsv.addEventListener('click', ()=>{
+      if (!lastRows.length) return;
+      const csv = toCSV(lastRows);
+      const filename = `telemetry_${new Date().toISOString().replace(/[:.]/g,"-")}.csv`;
+      downloadCSV(filename, csv);
+    });
+  }
+
+  socket.on('history_result', (resp)=>{
+    if (!resp?.ok){
+      if (histInfo) histInfo.textContent = "Hata: " + (resp?.error || "bilinmiyor");
+      return;
+    }
+    lastRows = resp.rows || [];
+    renderHistory(lastRows);
+  });
+
+
+  // =============================
+  // Geçmiş KİLİTLENMELER (CSV)
+  // =============================
+  const lkSrc   = document.getElementById("lk_src");
+  const lkDst   = document.getElementById("lk_dst");
+  const lkStart = document.getElementById("lk_start");
+  const lkEnd   = document.getElementById("lk_end");
+  const lkLimit = document.getElementById("lk_limit");
+  const btnLocksQuery = document.getElementById("btnLocksQuery");
+  const btnLocksCsv   = document.getElementById("btnLocksCsv");
+  const locksInfo     = document.getElementById("locksInfo");
+  const locksHistBody = document.querySelector("#locksHistTable tbody");
+
+  let lastLocksRows = []; // kilitlenme sonuçları (CSV için saklanır)
+
+  function renderLocksHistory(rows){
+    if (!locksHistBody) return;
+    locksHistBody.innerHTML = "";
+    (rows || []).forEach(r=>{
+      const gps = (r.kilit_bitis_gps && typeof r.kilit_bitis_gps === 'object')
+        ? `${pad2(r.kilit_bitis_gps.saat)}:${pad2(r.kilit_bitis_gps.dakika)}:${pad2(r.kilit_bitis_gps.saniye)}.${r.kilit_bitis_gps.milisaniye ?? "--"}`
+        : (r.kilit_bitis_gps || "—");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${r.ts_utc}</td>
+        <td>${r.kaynak_takim ?? ""}</td>
+        <td>${r.kilitlenen_takim ?? ""}</td>
+        <td>${r.otonom_kilitlenme ?? ""}</td>
+        <td>${gps}</td>
+        <td>${r.hedef_merkez_X ?? "—"}</td>
+        <td>${r.hedef_merkez_Y ?? "—"}</td>
+        <td>${r.hedef_genislik ?? "—"}</td>
+        <td>${r.hedef_yukseklik ?? "—"}</td>
+      `;
+      locksHistBody.appendChild(tr);
+    });
+    if (locksInfo) locksInfo.textContent = `${rows.length} kayıt listelendi.`;
+    if (btnLocksCsv) btnLocksCsv.disabled = rows.length === 0;
+  }
+
+  function toCSVLocks(rows){
+  const header = [
+    "ts_utc","kaynak_takim","kilitlenen_takim","otonom_kilitlenme","kilit_bitis_gps",
+    "hedef_merkez_X","hedef_merkez_Y","hedef_genislik","hedef_yukseklik"
+  ];
+  const lines = [header.join(",")];
+  rows.forEach(r=>{
+    let gps = r.kilit_bitis_gps;
+    if (gps && typeof gps === 'object') {
+      gps = `${pad2(gps.saat)}:${pad2(gps.dakika)}:${pad2(gps.saniye)}.${gps.milisaniye ?? "--"}`;
+    }
+    const vals = [
+      r.ts_utc, r.kaynak_takim, r.kilitlenen_takim, r.otonom_kilitlenme, (gps ?? ""),
+      r.hedef_merkez_X ?? "", r.hedef_merkez_Y ?? "", r.hedef_genislik ?? "", r.hedef_yukseklik ?? ""
+    ];
+    const esc = vals.map(v=>{
+      const s = String(v ?? "");
+      return (s.includes(",") || s.includes('"') || s.includes("\n")) ? `"${s.replace(/"/g,'""')}"` : s;
+    });
+    lines.push(esc.join(","));
+  });
+  return lines.join("\n");
+}
+
+
+  if (btnLocksQuery){
+    btnLocksQuery.addEventListener('click', ()=>{
+      const payload = {
+        kaynak:     (lkSrc   && lkSrc.value)   ? lkSrc.value   : null,
+        kilitlenen: (lkDst   && lkDst.value)   ? lkDst.value   : null,
+        start:      (lkStart && lkStart.value) ? lkStart.value : null,
+        end:        (lkEnd   && lkEnd.value)   ? lkEnd.value   : null,
+        limit:      (lkLimit && lkLimit.value) ? parseInt(lkLimit.value,10) : 500
+      };
+      socket.emit('fetch_locks', payload);   // <-- Sunucu: on_fetch_locks
+      if (locksInfo) locksInfo.textContent = "Sorgulanıyor...";
+    });
+  }
+
+  if (btnLocksCsv){
+    btnLocksCsv.addEventListener('click', ()=>{
+      if (!lastLocksRows.length) return;
+      const csv = toCSVLocks(lastLocksRows);
+      const filename = `locks_${new Date().toISOString().replace(/[:.]/g,"-")}.csv`;
+      downloadCSV(filename, csv);
+    });
+  }
+
+  socket.on('locks_result', (resp)=>{
+    if (!resp?.ok){
+      if (locksInfo) locksInfo.textContent = "Hata: " + (resp?.error || "bilinmiyor");
+      return;
+    }
+    lastLocksRows = resp.rows || [];
+    renderLocksHistory(lastLocksRows);
+  });
+</script>
+
+<script>
+  (() => {
+  // === Canlı kamikaze tablosu (izole blok) ===
+  const pad2kz = n => String(n ?? "--").padStart(2,"0");   // <-- isim değişti
+  const fmtTimeKz = g => g ? `${pad2kz(g.saat)}:${pad2kz(g.dakika)}:${pad2kz(g.saniye)}.${g.milisaniye ?? "000"}` : "—";
+  const utcNowKz = () => new Date().toISOString().replace("T"," ").replace("Z","");
+
+  let domReady = document.readyState !== 'loading';
+  const pendingKz = [];
+
+  function findOrMakeKzBody() {
+    const table = document.getElementById("kzLiveTable");
+    if (!table) return null;
+    let tbody = table.querySelector("tbody");
+    if (!tbody) { tbody = document.createElement("tbody"); table.appendChild(tbody); }
+    return tbody;
+  }
+
+  function appendKzRow(e) {
+    const body = findOrMakeKzBody();
+    if (!body) { pendingKz.push(e); return; }
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${utcNowKz()}</td>
+      <td>${e.kaynak_takim ?? "—"}</td>
+      <td>${e.qrMetni ?? "—"}</td>
+      <td>${fmtTimeKz(e.kamikazeBaslangicZamani)}</td>
+      <td>${fmtTimeKz(e.kamikazeBitisZamani)}</td>
+    `;
+    body.prepend(tr);
+    tr.style.outline = "2px solid rgba(34,197,94,.5)";
+    setTimeout(()=> tr.style.outline = "", 500);
+    const LE = document.getElementById("lastEvent");
+    if (LE) LE.textContent = new Date().toLocaleTimeString();
+  }
+
+  function flushPending(){ if (pendingKz.length) pendingKz.splice(0).forEach(appendKzRow); }
+  if (domReady) flushPending();
+  document.addEventListener("DOMContentLoaded", () => { domReady = true; flushPending(); });
+
+  // Event
+  socket.on("kamikaze_event", (e) => {
+    console.log("kamikaze_event:", e);
+    if (!domReady) { pendingKz.push(e); return; }
+    appendKzRow(e);
+  });
+})();
+
+
+  // === Geçmiş kamikaze (Socket.IO ile) ===
+  const kzSrc   = document.getElementById("kz_src");
+  const kzStart = document.getElementById("kz_start");
+  const kzEnd   = document.getElementById("kz_end");
+  const kzLimit = document.getElementById("kz_limit");
+  const btnKzQ  = document.getElementById("btnKzQuery");
+  const btnKzCsv= document.getElementById("btnKzCsv");
+  const kzInfo  = document.getElementById("kzInfo");
+  const kzHistBody = document.querySelector("#kzHistTable tbody");
+
+  let lastKzRows = [];
+
+  function renderKzHistory(rows){
+  if (!kzHistBody) return;
+  kzHistBody.innerHTML = "";
+  (rows || []).forEach(r=>{
+    const b = r.baslangic_zaman || r.baslangic_gps; // DB’de hangi isim varsa
+    const e = r.bitis_zaman     || r.bitis_gps;
+    const btxt = b ? `${pad2(b.saat)}:${pad2(b.dakika)}:${pad2(b.saniye)}.${b.milisaniye ?? '--'}` : '—';
+    const etxt = e ? `${pad2(e.saat)}:${pad2(e.dakika)}:${pad2(e.saniye)}.${e.milisaniye ?? '--'}` : '—';
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${r.ts_utc}</td>
+      <td>${r.kaynak_takim ?? ""}</td>
+      <td>${r.qr_metni ?? r.qrMetni ?? ""}</td>
+      <td>${btxt}</td>
+      <td>${etxt}</td>
+    `;
+    kzHistBody.appendChild(tr);
+  });
+  if (kzInfo) kzInfo.textContent = `${rows.length} kayıt listelendi.`;
+  if (btnKzCsv) btnKzCsv.disabled = rows.length === 0;
+  }
+
+  function toCSVKz(rows){
+    const header = ["ts_utc","kaynak_takim","qr_metni","baslangic_gps","bitis_gps"];
+    const lines = [header.join(",")];
+    rows.forEach(r=>{
+      const b = r.baslangic_gps, e = r.bitis_gps;
+      const btxt = b ? `${pad2(b.saat)}:${pad2(b.dakika)}:${pad2(b.saniye)}.${b.milisaniye ?? '--'}` : '';
+      const etxt = e ? `${pad2(e.saat)}:${pad2(e.dakika)}:${pad2(e.saniye)}.${e.milisaniye ?? '--'}` : '';
+      const vals = [r.ts_utc, r.kaynak_takim ?? "", r.qr_metni ?? "", btxt, etxt];
+      const esc = vals.map(v=>{
+        const s = String(v ?? "");
+        return (s.includes(",") || s.includes('"') || s.includes("\n")) ? `"${s.replace(/"/g,'""')}"` : s;
+      });
+      lines.push(esc.join(","));
+    });
+    return lines.join("\n");
+  }
+
+  function downloadCSV(filename, content){
+    const blob = new Blob([content], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+  }
+
+  if (btnKzQ){
+    btnKzQ.addEventListener('click', ()=>{
+      const payload = {
+        kaynak: (kzSrc && kzSrc.value) ? kzSrc.value : null,
+        start:  (kzStart && kzStart.value) ? kzStart.value : null,
+        end:    (kzEnd   && kzEnd.value)   ? kzEnd.value   : null,
+        limit:  (kzLimit && kzLimit.value) ? parseInt(kzLimit.value,10) : 500
+      };
+      socket.emit('fetch_kamikaze', payload);
+      if (kzInfo) kzInfo.textContent = "Sorgulanıyor...";
+    });
+  }
+  if (btnKzCsv){
+    btnKzCsv.addEventListener('click', ()=>{
+      if (!lastKzRows.length) return;
+      const csv = toCSVKz(lastKzRows);
+      const filename = `kamikaze_${new Date().toISOString().replace(/[:.]/g,"-")}.csv`;
+      downloadCSV(filename, csv);
+    });
+  }
+
+  socket.on('kamikaze_result', (resp)=>{
+    if (!resp?.ok){
+      if (kzInfo) kzInfo.textContent = "Hata: " + (resp?.error || "bilinmiyor");
+      return;
+    }
+    lastKzRows = resp.rows || [];
+    renderKzHistory(lastKzRows);
+  });
+</script>
+
+<script>
+  // --- Leaflet teşhis (isteğe bağlı) ---
+  (function () {
+    const box = document.getElementById('liveMap');
+    if (!box) return;
+    if (typeof L === 'undefined') {
+      box.innerHTML = '<div style="padding:10px">Leaflet yüklenemedi. /static/leaflet/leaflet.js ve .css yolunu kontrol et.</div>';
+    }
+  })();
+
+  // --- Tekil değişkenler (bir kez tanımla) ---
+  let map, ownMarker;
+  const enemyMarkers = new Map();  // takım_no -> marker
+  let hssLayer = L.layerGroup();
+  const hssDrawLayer = L.featureGroup().addTo(hssLayer);
+  let editGroup; // ← ortak düzenleme grubu
+  let fenceLayer, fenceLabelLayer;
+
+  // Sunucu HSS çizimi
+  function renderHSS(items){
+    hssDrawLayer.clearLayers();
+    // editGroup içindeki eski HSS dairelerini temizlemek istersen:
+    // editGroup.eachLayer(l => { if (l instanceof L.Circle) editGroup.removeLayer(l); });
+
+    (items || []).forEach(it=>{
+      const c = L.circle([it.lat, it.lon], {
+        radius: it.radius, color: '#6b21a8', fillOpacity: 0.08, weight: 2
+      });
+      c.options.hid = it.id;
+      hssDrawLayer.addLayer(c);
+      editGroup.addLayer(c);                 // ← sil/düzenle için şart
+      c.bindPopup((it.name || 'HSS') + ` • ${Math.round(it.radius)} m`);
+    });
+  }
+
+
+
+  // --- Harita başlat ---
+
+  // Global state
+  window._isOutside     = false;     // şu an dışarıda mıyız?
+  window._outsideSince  = null;      // dışarı çıktığımız an (ms)
+  window._outsideTick   = null;      // interval id
+  window._lastViolation = 0;         // son geofence_violation zamanı (ms)
+
+  function initMap() {
+    const el = document.getElementById('liveMap');
+    if (!el) return;
+    if (map) return;                 // zaten kuruluysa çık
+    if (typeof L === 'undefined') return;
+
+    map = L.map(el, { zoomControl: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      detectRetina: true,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    hssLayer.addTo(map);
+    map.setView([39.0, 35.0], 5);
+    // Qt WebView/grid ölçü düzeltmesi
+    setTimeout(() => map.invalidateSize(), 300);
+
+    editGroup       = L.featureGroup().addTo(map);   // tek edit grubu
+    fenceLayer      = L.featureGroup().addTo(map);
+    fenceLabelLayer = L.layerGroup().addTo(map);
+
+
+    const drawControl = new L.Control.Draw({
+      draw: {
+        rectangle: { shapeOptions: { color: '#ef4444' } }, // geofence
+        circle:    { shapeOptions: { color: '#6b21a8' } }, // HSS
+        polygon: false, polyline: false, marker: false, circlemarker: false
+      },
+      edit: { featureGroup: editGroup, remove: true }      // ← tek grup
+    });
+    map.addControl(drawControl);
+
+    // === CREATED: circle (HSS) + rectangle (fence) ===
+    map.on(L.Draw.Event.CREATED, async (e) => {
+      function resetEditMode(){
+        const tb = drawControl && drawControl._toolbars && drawControl._toolbars.edit;
+        if (tb?.__modes?.edit?.handler?.disable) {
+          tb.__modes.edit.handler.disable();
+        } else if (tb?._modes?.edit?.handler?.disable) {
+          tb._modes.edit.handler.disable();
+        }
+      }
+
+      // HSS (circle)
+      if (e.layerType === 'circle') {
+        const layer  = e.layer;
+        const center = layer.getLatLng();
+        const defR   = Math.round(layer.getRadius()) || 50;
+        const name   = prompt("HSS adı:", "HSS");
+        const R      = Number(prompt("Yarıçap (m):", String(defR)));
+        if (!R || R <= 0) return;
+
+        try {
+          const res = await fetch("/api/hss", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + (window.AUTH_TOKEN || "fake_token_123")
+            },
+            body: JSON.stringify({ name, lat:center.lat, lon:center.lng, radius:R })
+          });
+          const j = await res.json();
+          if (!j?.ok) { alert("HSS kaydetme hatası: " + (j?.error || res.status)); return; }
+        } catch (err) { alert("HSS kaydedilemedi: " + err); return; }
+
+        try { map.removeLayer(layer); } catch {}
+        const hj = await fetch("/api/hss").then(r => r.json()).catch(()=>null);
+        if (hj?.ok) renderHSS(hj.items);
+        return;
+      }
+
+      // Fence (rectangle → polygon)
+      if (e.layerType === 'rectangle') {
+        const layer = e.layer;
+        const b = layer.getBounds();
+        const corners = [
+          [b.getWest(), b.getSouth()],
+          [b.getEast(), b.getSouth()],
+          [b.getEast(), b.getNorth()],
+          [b.getWest(),  b.getNorth()],
+          [b.getWest(),  b.getSouth()]
+        ];
+
+        const payload = {
+          name: (prompt("Alan adı:", "Geofence") || "Geofence"),
+          kind: "polygon",
+          geojson: { type:"Feature", geometry:{ type:"Polygon", coordinates:[corners] }, properties:{} },
+          color: "#ef4444"
+        };
+
+        await fetch("/api/fences", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json",
+                    "Authorization":"Bearer "+(window.AUTH_TOKEN||"fake_token_123") },
+          body: JSON.stringify(payload)
+        });
+
+        try { map.removeLayer(layer); } catch {}
+        resetEditMode();
+
+        const fj = await fetch("/api/fences").then(r=>r.json());
+        if (fj?.ok) { refreshFences(fj.items); renderFenceCornerLabels(fj.items); }
+      }
+    });
+
+
+    // === EDITED: circle (HSS) + polygon (fence) ===
+    map.on(L.Draw.Event.EDITED, async (e) => {
+      console.log("EDITED layers:", e.layers.getLayers().map(ly => ({
+        type: ly instanceof L.Circle ? 'circle' : (ly instanceof L.Polygon ? 'polygon' : 'other'),
+        fid: ly.options?.fid, hid: ly.options?.hid
+      })));
+      const ops = [];
+      e.layers.eachLayer((ly) => {
+        if (ly instanceof L.Circle) {
+          const hid = ly.options?.hid; if (!hid) return;
+          const c = ly.getLatLng(); const R = ly.getRadius();
+          ops.push(fetch(`/api/hss/${hid}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json",
+                       "Authorization": "Bearer " + (window.AUTH_TOKEN || "fake_token_123") },
+            body: JSON.stringify({ lat:c.lat, lon:c.lng, radius:R })
+          }));
+        } else if (ly instanceof L.Polygon) {
+          const fid = ly.options?.fid; if (!fid) return;
+          const latlngs = (ly.getLatLngs?.()[0]) || [];
+          let corners = latlngs.map(p=>[p.lng, p.lat]);
+          const last = corners[corners.length - 1] || [];
+          if (corners.length && (corners[0][0] !== last[0] || corners[0][1] !== last[1])) {
+            corners.push(corners[0]);
+          }
+
+          const payload = {
+            name: (ly.getPopup()?.getContent()) || "Geofence",
+            kind: "polygon",
+            geojson: { type:"Feature", geometry:{ type:"Polygon", coordinates:[corners] }, properties:{} },
+            color: "#ef4444"
+          };
+          ops.push(fetch(`/api/fences/${fid}`, {
+            method:"PUT",
+            headers:{ "Content-Type":"application/json",
+                      "Authorization":"Bearer "+(window.AUTH_TOKEN||"fake_token_123") },
+            body: JSON.stringify(payload)
+          }));
+        }
+      });
+      if (ops.length) await Promise.all(ops);
+
+      const [hssRes, fenRes] = await Promise.all([
+        fetch("/api/hss").then(r=>r.json()).catch(()=>null),
+        fetch("/api/fences").then(r=>r.json()).catch(()=>null),
+      ]);
+      if (hssRes?.ok) renderHSS(hssRes.items);
+      if (fenRes?.ok) { refreshFences(fenRes.items); renderFenceCornerLabels(fenRes.items); }
+    });
+
+    // === DELETED: circle (HSS) + polygon (fence) ===
+    map.on(L.Draw.Event.DELETED, async (e) => {
+      const ops = [];
+      e.layers.eachLayer((ly) => {
+        if (ly instanceof L.Circle && ly.options?.hid != null) {
+          ops.push(fetch(`/api/hss/${ly.options.hid}`, {
+            method: "DELETE",
+            headers: { "Authorization": "Bearer " + (window.AUTH_TOKEN || "fake_token_123") }
+          }));
+        } else if (ly instanceof L.Polygon && !(ly instanceof L.Circle) && ly.options?.fid != null) {
+          ops.push(fetch(`/api/fences/${ly.options.fid}`, {
+            method: "DELETE",
+            headers: { "Authorization": "Bearer " + (window.AUTH_TOKEN || "fake_token_123") }
+          }));
+        }
+      });
+      if (ops.length) await Promise.all(ops);
+
+      const [hssRes, fenRes] = await Promise.all([
+        fetch("/api/hss").then(r=>r.json()).catch(()=>null),
+        fetch("/api/fences").then(r=>r.json()).catch(()=>null),
+      ]);
+      if (hssRes?.ok) renderHSS(hssRes.items);
+      if (fenRes?.ok) { refreshFences(fenRes.items); renderFenceCornerLabels(fenRes.items); }
+    });
+
+
+
+
+
+
+
+
+  // 5) İlk HSS çekimi ve canlı güncelleme (socket varsa)
+  fetch("/api/hss").then(r=>r.json()).then(resp=>{
+    if (resp?.ok) renderHSS(resp.items);
+  });
+
+  if (window.socket) {
+    socket.on("hss_update", payload=>{
+      renderHSS(payload?.items || []);
+    });
+  }
+
+
+    // === GEÇİLMEZ DİKDÖRTGEN: KATMANLAR + YARDIMCILAR ===
+
+
+    function fmt(n){ return (typeof n==='number' ? Number(n).toFixed(6) : n); }
+
+    function rectCornersFromGeoJSONPolygon(geojson) {
+      const coords = (geojson && geojson.geometry && geojson.geometry.coordinates && geojson.geometry.coordinates[0]) || [];
+      if (coords.length < 4) return null;
+      let minLon=Infinity, maxLon=-Infinity, minLat=Infinity, maxLat=-Infinity;
+      for (let i=0;i<coords.length;i++){
+        const lon = coords[i][0], lat = coords[i][1];
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+      }
+      return {
+        NW: { lat:maxLat, lon:minLon },
+        NE: { lat:maxLat, lon:maxLon },
+        SE: { lat:minLat, lon:maxLon },
+        SW: { lat:minLat, lon:minLon }
+      };
+    }
+
+    function renderFenceCornerLabels(items){
+      fenceLabelLayer.clearLayers();
+
+      // ufak yardımcılar
+      const samePt = (a,b,eps=1e-9)=> Math.abs(a[0]-b[0])<eps && Math.abs(a[1]-b[1])<eps;
+      const isAxisAlignedRect = (ring) => {
+        // ring: [[lon,lat], ...] (kapanış noktası hariç)
+        if (ring.length !== 4) return false;
+        const lats = ring.map(p=>p[1].toFixed(6));
+        const lons = ring.map(p=>p[0].toFixed(6));
+        const uLat = [...new Set(lats)], uLon = [...new Set(lons)];
+        return uLat.length === 2 && uLon.length === 2; // 2 farklı enlem ve 2 farklı boylam → eksenlere paralel dikdörtgen
+      };
+
+      (items || []).forEach(f => {
+        if (!f || f.kind !== 'polygon') return;
+        const coords = f.geojson?.geometry?.coordinates?.[0] || [];
+        if (coords.length < 4) return;
+
+        // kapanış noktasını at (ilk ve son aynıysa)
+        let ring = coords.slice();
+        if (ring.length > 1 && samePt(ring[0], ring[ring.length-1])) ring.pop();
+
+        // 1) Eksenlere paralel dikdörtgen → NW/NE/SE/SW
+        if (isAxisAlignedRect(ring)) {
+          let minLon=Infinity, maxLon=-Infinity, minLat=Infinity, maxLat=-Infinity;
+          ring.forEach(([lon,lat]) => {
+            if (lon < minLon) minLon = lon;
+            if (lon > maxLon) maxLon = lon;
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+          });
+          const corners = {
+            NW:[maxLat, minLon], NE:[maxLat, maxLon],
+            SE:[minLat, maxLon], SW:[minLat, minLon]
+          };
+          Object.entries(corners).forEach(([name,[lat,lon]])=>{
+            const html = `<div style="color:#000;font-size:13px;font-weight:600">${name}<br>${lat.toFixed(6)}, ${lon.toFixed(6)}</div>`;
+            const icon = L.divIcon({ className:'', html, iconSize:null });
+            L.marker([lat, lon], { icon }).addTo(fenceLabelLayer);
+          });
+          return;
+        }
+
+        // 2) Yamuk/serbest poligon → gerçek köşeleri P1..Pn olarak etiketle
+        ring.forEach(([lon,lat], i) => {
+          const name = 'P' + (i+1);
+          const html = `<div style="color:#000;font-size:13px;font-weight:600">${name}<br>${lat.toFixed(6)}, ${lon.toFixed(6)}</div>`;
+          const icon = L.divIcon({ className:'', html, iconSize:null });
+          L.marker([lat, lon], { icon }).addTo(fenceLabelLayer);
+        });
+      });
+    }
+
+
+
+
+
+    function refreshFences(items){
+      fenceLayer.clearLayers();
+      // editGroup içindeki eski polygonları temizlemek istersen:
+      // editGroup.eachLayer(l => { if (l instanceof L.Polygon && !(l instanceof L.Circle)) editGroup.removeLayer(l); });
+
+      (items || []).forEach(function(f){
+        const color = (f && f.color) ? f.color : '#ef4444';
+        if (f && f.kind === 'polygon') {
+          const coords = (f.geojson?.geometry?.coordinates?.[0]) || [];
+          const latlngs = coords.map(p => [p[1], p[0]]);
+          const layer = L.polygon(latlngs, { color, weight: 2, fill: false })
+            .bindPopup((f.name || 'Geofence'))
+            .addTo(fenceLayer);
+          layer.options.fid = f.id;
+          editGroup.addLayer(layer);           // ← sil/düzenle için şart
+        }
+      });
+    }
+
+
+    // === İLK YÜKLEME ===
+    fetch("/api/fences").then(function(r){ return r.json(); }).then(function(resp){
+      if (resp && resp.ok) {
+        refreshFences(resp.items);
+        renderFenceCornerLabels(resp.items);
+      }
+    });
+
+    // === CANLI GÜNCELLEME ===
+    if (window.socket) {
+      socket.on('fences_update', function(data){
+        const items = (data && data.items) ? data.items : [];
+        refreshFences(items);
+        renderFenceCornerLabels(items);
+      });
+    }
+
+
+
+
+
+
+
+
+    // Dışarıya çıkıldı/kalınıyor: sayaç başlat + güncelle
+    socket.on('geofence_violation', (e)=>{
+      const box    = document.getElementById('fenceWarn');
+      const timeEl = document.getElementById('fenceWarnTime');
+      const infoEl = document.getElementById('fenceOutsideInfo');
+
+      // Son ihlal paketinin zamanını not et (watchdog için)
+      window._lastViolation = Date.now();
+
+      // Geçişse (içeriden -> dışarı) sayaç 0'dan başlasın
+      if (!window._isOutside) {
+        window._isOutside    = true;
+        window._outsideSince = Date.now();
+
+        // CANLI sayaç (1 Hz) + WATCHDOG (paket kesilirse içeri varsay)
+        if (!window._outsideTick) {
+          window._outsideTick = setInterval(()=>{
+            // 1) Paket kesilmişse ya da gecikmişse (örn. 1.5 sn’den uzun), içeri varsay ve kapat
+            if (window._isOutside && Date.now() - window._lastViolation > 1500) {
+              handleInside();        // aşağıda tanımlı
+              return;
+            }
+            // 2) Normal sayaç güncellemesi
+            const infoEl2 = document.getElementById('fenceOutsideInfo');
+            if (window._isOutside && window._outsideSince && infoEl2) {
+              const secs = Math.max(0, Math.round((Date.now() - window._outsideSince)/1000));
+              infoEl2.textContent = ` • Dışarıda: ${secs} sn`;
+            }
+          }, 1000);
+        }
+      }
+
+      // Uyarıyı göster & saat yaz
+      if (box) box.style.display = 'block';
+      if (timeEl) timeEl.textContent = ' • ' + new Date(e.utc).toLocaleTimeString();
+
+      // İlk frame’de sayıyı hemen bastır
+      if (infoEl && window._outsideSince) {
+        const secs = Math.max(0, Math.round((Date.now() - window._outsideSince)/1000));
+        infoEl.textContent = ` • Dışarıda: ${secs} sn`;
+      }
+    });
+
+    // İçeri girildi: server bildirimi geldiğinde kesin kapat
+    socket.on('geofence_ok', ()=>{
+      handleInside();
+    });
+
+    // Ortak kapatma/sıfırlama
+    function handleInside(){
+      const box    = document.getElementById('fenceWarn');
+      const timeEl = document.getElementById('fenceWarnTime');
+      const infoEl = document.getElementById('fenceOutsideInfo');
+
+      window._isOutside    = false;
+      window._outsideSince = null;
+      window._lastViolation= 0;
+
+      if (window._outsideTick) {
+        clearInterval(window._outsideTick);
+        window._outsideTick = null;
+      }
+
+      if (box)    box.style.display = 'none';
+      if (timeEl) timeEl.textContent = '';
+      if (infoEl) infoEl.textContent = '';
+    }
+
+  }
+
+  // --- Marker yardımcıları ---
+  function makeOwnMarker(lat, lon, popup) {
+    const m = L.circleMarker([lat, lon], { radius: 8, weight: 2, color: '#2563eb', fillOpacity: 0.7 });
+    if (popup) m.bindPopup(popup);
+    return m.addTo(map);
+  }
+  function makeEnemyMarker(lat, lon, popup) {
+    const m = L.circleMarker([lat, lon], { radius: 7, weight: 2, color: '#ef4444', fillOpacity: 0.7 });
+    if (popup) m.bindPopup(popup);
+    return m.addTo(map);
+  }
+
+  function fitAllOnce() {
+    const pts = [];
+    if (ownMarker) pts.push(ownMarker.getLatLng());
+    enemyMarkers.forEach(m => pts.push(m.getLatLng()));
+    if (!pts.length) return;
+    const b = L.latLngBounds(pts);
+    map.fitBounds(b.pad(0.2));
+  }
+
+  // --- Telemetri geldiğinde haritayı güncelle ---
+  const _origTelemetryHandler = (data) => {
+    const { takim, telemetry, enemies } = data;
+
+    // Kendi İHA
+    const lat = parseFloat(telemetry?.iha_enlem);
+    const lon = parseFloat(telemetry?.iha_boylam);
+    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+      const popSelf = `Takım ${takim}<br>Alt: ${telemetry?.iha_irtifa ?? '—'} m<br>Hız: ${telemetry?.iha_hiz ?? '—'} m/s`;
+      if (!ownMarker) {
+        ownMarker = makeOwnMarker(lat, lon, popSelf);
+        map.setView([lat, lon], 16);
+      } else {
+        ownMarker.setLatLng([lat, lon]).setPopupContent(popSelf);
+      }
+    }
+
+    // Düşmanlar
+    const seen = new Set();
+    (enemies || []).forEach(e => {
+      const tid = e.takim_numarasi;
+      const elat = parseFloat(e.iha_enlem), elon = parseFloat(e.iha_boylam);
+      if (Number.isNaN(elat) || Number.isNaN(elon)) return;
+      seen.add(tid);
+      const hiz = (e.iha_hizi ?? e.iha_hiz ?? '—'); // geriye uyumlu
+      const popEnemy = `Düşman Takım ${tid}<br>Alt: ${e.iha_irtifa ?? '—'} m<br>Hız: ${hiz} m/s`;
+
+      if (enemyMarkers.has(tid)) {
+        enemyMarkers.get(tid).setLatLng([elat, elon]).setPopupContent(popEnemy);
+      } else {
+        enemyMarkers.set(tid, makeEnemyMarker(elat, elon, popEnemy));
+      }
+    });
+    enemyMarkers.forEach((m, tid) => { if (!seen.has(tid)) { map.removeLayer(m); enemyMarkers.delete(tid); } });
+
+    if (!fitAllOnce._done) { fitAllOnce(); fitAllOnce._done = true; }
+  };
+
+  // Var olan telemetry_update handler'ından SONRA çalışacak ek dinleyici
+  socket.on('telemetry_update', (data) => {
+    try { _origTelemetryHandler(data); } catch (e) { console.warn('map update err', e); }
+  });
+
+
+  // DOM hazır olunca haritayı başlat
+  document.addEventListener('DOMContentLoaded', () => {
+    initMap();
+  });
+</script>
+
+
+
+
+
+
+</body>
+</html>
