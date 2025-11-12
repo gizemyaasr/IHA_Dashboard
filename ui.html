@@ -51,8 +51,7 @@
     padding:10px
   }
   @media (max-width:1100px){.row{grid-template-columns:1fr}}
-  .leaflet-container { background: #0f1318;
-
+  .leaflet-container { background: #0f1318; }
   #liveMap { height: 420px; width: 100%; }
   .fence-label{
     background: rgba(255,255,255,0.95) !important ;   /* açık beyaz kutu */
@@ -296,7 +295,7 @@
   const setLE = (txt) => { if (LE) LE.textContent = txt; };
 
   // aynı origin’e otomatik bağlanır
-  const socket = io({
+    const socket = io({
     path: "/socket.io",
     transports: ["polling"]
   });

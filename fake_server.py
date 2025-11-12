@@ -21,7 +21,7 @@ _latest_telemetry = {}
 
 # (Opsiyonel) kaç saniyeden eski telemetry'i düşman listesinden çıkarmak istersin
 _TELEMETRY_STALE_SEC = 5.0   # örn. 5 saniye; gerçek testte network koşullarına göre arttırabilirsin
-TEAM_NO = 25
+TEAM_NO = None
 
 TOKEN = "fake_token_123"
 SESSION_COOKIE = "sessionid"
@@ -422,9 +422,11 @@ def validate_telemetry(t):
         return False
 
 _enemy_angle = 0.0
+
 @app.route("/api/telemetri_gonder", methods=["POST"])
 def telemetri():
-    global _latest_telemetry, TEAM_NO, _TELEMETRY_STALE_SEC
+    # TEAM_NO artık yayın/ayrım için kullanılmıyor; projede başka yerde kullanıyorsanız kalsın.
+    global _latest_telemetry, TEAM_NO, _TELEMETRY_STALE_SEC, _last_telemetry_ts, _RATE_PERIOD
 
     if not ok_auth():
         return "401", 401
@@ -432,53 +434,52 @@ def telemetri():
     t = request.get_json(silent=True) or {}
     print("📡 Gelen Telemetri:", t)
 
-    # Şema/alan kontrolü: başarısızsa 204
+    # Şema/alan kontrolü: başarısızsa 204 (gövde yok)
     if not validate_telemetry(t):
         return "", 204
 
-    # takım id
+    # 0) Takım id'yi GÖNDERENDEN al
     try:
         takim = int(t["takim_numarasi"])
     except Exception:
         return ("bad request", 400)
 
-    # 2 Hz limiti: hızlıysa 400 ve gövdede "3"
+    # 1) Rate limit (takım bazlı) — 2 Hz (0.5 s)
     now_m = time.monotonic()
     last = _last_telemetry_ts.get(takim, 0)
     if now_m - last < _RATE_PERIOD:
-        return ("3", 400)
+        return ("3", 400)  # hızlı gönderim
     _last_telemetry_ts[takim] = now_m
 
-    # 1) In-memory: bu takıma ait en son telemetriyi güncelle
+    # 2) In-memory son telemetri kaydı (takım bazlı)
     try:
-        _latest_telemetry[takim] = {
-            "telemetry": t,
-            "ts": time.time()
-        }
+        _latest_telemetry[takim] = {"telemetry": t, "ts": time.time()}
     except Exception as e:
         print("❌ _latest_telemetry güncelleme hatası:", e)
 
-    # 1.2) Geofence kontrolü (kendi takım dışarıdaysa uyarı yayınla)
+    # 3) (Opsiyonel) Geofence kontrolü — gönderene uygula
     try:
         lat = float(t.get("iha_enlem"))
         lon = float(t.get("iha_boylam"))
-        if takim == TEAM_NO and not is_inside_fences(lat, lon):
+        if not is_inside_fences(lat, lon):
             socketio.emit("geofence_violation", {
                 "takim": takim,
                 "lat": lat,
                 "lon": lon,
                 "utc": now_iso()
             })
+        else:
+            socketio.emit("geofence_ok", {"takim": takim, "utc": now_iso()})
     except Exception as e:
         print("⚠️ Geofence kontrol hatası:", e)
 
-    # 2) İsteğe bağlı: kalıcı kaydet (DB) — aksi istenmediyse bile bırakabilirsin
+    # 4) (Opsiyonel) DB'ye yaz
     try:
         save_telemetry_row(takim, t)
     except Exception as e:
         print("save_telemetry_row hata:", e)
 
-    # 3) enemies: IN-MEMORY kayıtlardan (DB yok)
+    # 5) Enemies: diğer takımların güncel (bayat değilse) telemetrileri
     enemies = []
     try:
         now_ts = time.time()
@@ -486,7 +487,7 @@ def telemetri():
             ts = info.get("ts", 0)
             if _TELEMETRY_STALE_SEC is not None and (now_ts - ts) > _TELEMETRY_STALE_SEC:
                 continue
-            if tnum == TEAM_NO:
+            if tnum == takim:  # ← gönderenden farklı olanlar düşman
                 continue
 
             packet = info.get("telemetry", {}) or {}
@@ -517,29 +518,21 @@ def telemetri():
                 "zaman_farki": 0
             })
     except Exception as e:
-        print("enemies(in-memory) oluştururken hata:", e)
+        print("enemies oluştururken hata:", e)
         enemies = []
 
-    # 🔵 4) “Bizim” paket: her zaman TEAM_NO=25’in son paketi
-    self_pkt = None
-    if TEAM_NO in _latest_telemetry:
-        self_pkt = (_latest_telemetry[TEAM_NO].get("telemetry") or None)
-    # Eğer henüz 25 hiç göndermediyse ve bu çağrı 25 tarafından geldiyse:
-    if self_pkt is None and takim == TEAM_NO:
-        self_pkt = t
-
-    # 5) UI'ye yayın — ‘telemetry’ DAİMA bizim paket (25)
+    # 6) UI'ye yayın — 'takim' ve 'telemetry' gönderene ait
     try:
         socketio.emit('telemetry_update', {
-            "takim": TEAM_NO,
-            "telemetry": self_pkt,  # ← artık son POST eden değil, her zaman 25
+            "takim": takim,               # ← gönderenden gelen takım
+            "telemetry": t,               # ← gönderenden gelen paket
             "sunucusaati": server_now_dict(),
-            "enemies": enemies  # ← 25 dışındaki takımlar
+            "enemies": enemies            # ← diğer tüm takımlar
         })
     except Exception as _e:
         print("socketio.emit hata:", _e)
 
-    # 6) HTTP cevabı
+    # 7) HTTP cevabı aynı formatta (UI geriye uyumlu)
     return jsonify({
         "sunucusaati": server_now_dict(),
         "konumBilgileri": enemies,
@@ -548,6 +541,7 @@ def telemetri():
             for it in list_hss()
         ]
     }), 200
+
 
 
 @app.route("/api/kilitlenme_bilgisi", methods=["POST"])
