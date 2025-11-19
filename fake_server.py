@@ -7,6 +7,8 @@ from flask_socketio import SocketIO
 from flask import send_file
 from flask import send_from_directory
 import os
+import secrets
+
 
 app = Flask(__name__)
 
@@ -14,7 +16,16 @@ CORS(app, supports_credentials=True)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")  # dev için *; prod’da domain kısıtla
 
 # Basit kimlik & oturum
-VALID_USER = {"kadi": "anafarta", "sifre": "hYMrHayAaE"}
+VALID_USERS = [
+    {"kadi": "anafarta", "sifre": "123", "takim": 25},
+    {"kadi": "yem", "sifre": "123456", "takim": 20},
+    {"kadi": "deneme", "sifre": "deneme", "takim": 1}
+
+]
+
+
+ISSUED_TOKENS = {}   # token → team
+
 
 # In-memory en son telemetri kayıtları: {takim_numarasi: {"telemetry": t, "ts": time.time()}}
 _latest_telemetry = {}
@@ -351,9 +362,22 @@ def server_now_dict():
             "saniye": now.second, "milisaniye": int(now.microsecond/1000)}
 
 def ok_auth():
-    if request.cookies.get(SESSION_COOKIE) == "ok":
+    hdr = request.headers.get("Authorization", "")
+    if not hdr.startswith("Bearer "):
+        return False
+
+    tok = hdr.split(" ", 1)[1].strip()
+
+    # TEST MODE: fake token da kabul
+    if tok == "fake_token_123":
         return True
-    return request.headers.get("Authorization","") == f"Bearer {TOKEN}"
+
+    # Gerçek login tokenı
+    if tok in ISSUED_TOKENS:
+        return True
+
+    return False
+
 
 def deg2rad(d): return d*math.pi/180.0
 def rad2deg(r): return r*180.0/math.pi
@@ -372,11 +396,25 @@ def dest_from(lat, lon, bearing_deg, dist_m):
 @app.route("/api/giris", methods=["POST"])
 def giris():
     data = request.get_json(silent=True) or {}
-    if data.get("kadi") == VALID_USER["kadi"] and data.get("sifre") == VALID_USER["sifre"]:
-        resp = make_response(str(TEAM_NO))
-        resp.set_cookie(SESSION_COOKIE, "ok")
-        return resp, 200
-    return "Hatalı giriş", 400
+    kadi = data.get("kadi")
+    sifre = data.get("sifre")
+
+    # kullanıcıyı bul
+    user = next((u for u in VALID_USERS if u["kadi"] == kadi and u["sifre"] == sifre), None)
+    if not user:
+        return ("Geçersiz kullanıcı adı veya şifre", 400)
+
+    # rastgele token üret
+    token = secrets.token_hex(16)
+    ISSUED_TOKENS[token] = user["takim"]
+
+    print(f"🔐 Login OK: {kadi} → team {user['takim']} | token={token}")
+
+    return jsonify({
+        "takim_numarasi": user["takim"],
+        "token": token
+    }), 200
+
 
 @app.route("/api/sunucusaati", methods=["GET"])
 def sunucusaati():
@@ -524,10 +562,33 @@ def telemetri():
     # 6) UI'ye yayın — 'takim' ve 'telemetry' gönderene ait
     try:
         socketio.emit('telemetry_update', {
-            "takim": takim,               # ← gönderenden gelen takım
-            "telemetry": t,               # ← gönderenden gelen paket
+            "takim": takim,
+
+            # İHA ana telemetri bilgileri
+            "lat": t.get("iha_enlem"),
+            "lon": t.get("iha_boylam"),
+            "alt": t.get("iha_irtifa"),
+            "pitch": t.get("iha_dikilme"),
+            "yaw": t.get("iha_yonelme"),
+            "roll": t.get("iha_yatis"),
+            "speed": t.get("iha_hiz"),
+            "battery": t.get("iha_batarya"),
+            "otonom": t.get("iha_otonom"),
+            "kilit": t.get("iha_kilitlenme"),
+
+            # HEDEF bilgileri
+            "hedefX": t.get("hedef_merkez_X"),
+            "hedefY": t.get("hedef_merkez_Y"),
+            "hedefW": t.get("hedef_genislik"),
+            "hedefH": t.get("hedef_yukseklik"),
+
+            # GPS saati
+            "gps": t.get("gps_saati"),
+
+            # diğer takımlar
+            "enemies": enemies,
             "sunucusaati": server_now_dict(),
-            "enemies": enemies            # ← diğer tüm takımlar
+            "telemetry": t
         })
     except Exception as _e:
         print("socketio.emit hata:", _e)
@@ -577,15 +638,8 @@ def kilitlenme():
     ok_flag = int(data.get("otonom_kilitlenme", 0)) == 1
 
     payload = {
-        "kaynak_takim": data.get("kaynak_takim"),
-        "kilitlenen_takim": data.get("kilitlenen_takim"),
         "otonom_kilitlenme": 1 if ok_flag else 0,
-        "kilit_bitis_gps": kb,
-        "sunucusaati": server_now_dict(),
-        "hedef_merkez_X": data.get("hedef_merkez_X"),
-        "hedef_merkez_Y": data.get("hedef_merkez_Y"),
-        "hedef_genislik": data.get("hedef_genislik"),
-        "hedef_yukseklik": data.get("hedef_yukseklik"),
+        "kilit_bitis_gps": kb
     }
 
     try:
@@ -714,7 +768,6 @@ def hss_public():
     }), 200
 
 
-
 @app.route("/api/fences", methods=["GET"])
 def get_fences():
     return jsonify({"ok": True, "items": list_fences()}), 200
@@ -824,7 +877,7 @@ def on_fetch_locks(payload):
     payload: {
       kaynak?: int|string,         # kilitleyen takım (ops)
       kilitlenen?: int|string,     # kilitlenen takım (ops)
-      start?: 'YYYY-MM-DDTHH:MM:SSZ',  # ops
+      start?: 'YYYY-MM-DDTHH:MM:SSZ',  # opss
       end?:   'YYYY-MM-DDTHH:MM:SSZ',  # ops
       limit?: int                  # varsayılan 1000
     }

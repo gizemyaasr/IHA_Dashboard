@@ -91,24 +91,29 @@
       <div class="muted">Anlık veri (Socket.IO) • Son olay: <span id="lastEvent">—</span></div>
     </div>
 
+      <div class="card">
+        <h2>Canlı Harita</h2>
+        <div id="liveMap" style="height:420px;border-radius:12px;overflow:hidden"></div>
+        <div class="muted">Kendi İHA: mavi • Düşmanlar: kırmızı • HSS: mor daire</div>
+      </div>
 
       <div class="card">
         <h2>Son Paket (Ham)</h2>
         <pre id="rawbox">{}</pre>
       </div>
     </div>
-      <div id="fenceWarn" class="card" style="display:none;background:#2b0e10;border:1px solid #ef4444">
-        <b>Geofence ihlali!</b> Kendi İHA dikdörtgen dışında.
-        <span id="fenceWarnTime"></span>
-        <span id="fenceOutsideInfo" style="opacity:.85"></span>
+      <div id="fenceWarn" class="card"
+           style="display:none;background:#2b0e10;border:1px solid #ef4444">
+        <b>Geofence ihlali!</b>
+        <div id="fenceWarnTeams" style="margin-top:4px;font-weight:600;color:#fff">
+          <!-- Buraya takım listesi gelecek -->
+        </div>
+        <div id="fenceOutsideInfo" style="opacity:.85;font-size:14px;margin-top:2px">
+          <!-- Buraya süre bilgisi gelecek -->
+        </div>
       </div>
 
 
-      <div class="card">
-        <h2>Canlı Harita</h2>
-        <div id="liveMap" style="height:420px;border-radius:12px;overflow:hidden"></div>
-        <div class="muted">Kendi İHA: mavi • Düşmanlar: kırmızı • HSS: mor daire</div>
-      </div>
 
       <div class="row">
       <div class="card">
@@ -116,8 +121,22 @@
         <table id="ihatable">
           <thead>
             <tr>
-              <th>Takım</th><th>Durum</th><th>GPS Zamanı</th>
-              <th>Lat, Lon</th><th>İrtifa</th><th>Hız</th><th>Yaw</th><th>Batarya</th>
+              <th>Takım</th>
+              <th>Durum</th>
+              <th>GPS Zamanı</th>
+              <th>Lat, Lon</th>        <!-- iha_enlem, iha_boylam -->
+              <th>İrtifa</th>          <!-- iha_irtifa -->
+              <th>Dikilme</th>         <!-- iha_dikilme -->
+              <th>Yönelme</th>             <!-- iha_yonelme -->
+              <th>Yatış</th>           <!-- iha_yatis -->
+              <th>Hız</th>             <!-- iha_hiz -->
+              <th>Batarya</th>         <!-- iha_batarya -->
+              <th>Otonom</th>          <!-- iha_otonom -->
+              <th>Kilit</th>           <!-- iha_kilitlenme -->
+              <th>Hedef X</th>         <!-- hedef_merkez_X -->
+              <th>Hedef Y</th>         <!-- hedef_merkez_Y -->
+              <th>Genişlik</th>        <!-- hedef_genislik -->
+              <th>Yükseklik</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -142,20 +161,13 @@
         <thead>
           <tr>
             <th>Zaman (UTC)</th>
-            <th>Kilitleyen</th>
-            <th>Kilitlenen</th>
             <th>Otonom</th>
             <th>GPS Bitiş</th>
-            <th>Hedef X</th>
-            <th>Hedef Y</th>
-            <th>Genişlik</th>
-            <th>Yükseklik</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
-      <div class="muted">Not: kilitlenen takım gönderilmezse “bilinmiyor” görünür.</div>
-    </div>
+      </div>
 
 
   <div class="card">
@@ -319,27 +331,136 @@
     return `${h}:${m}:${s}.${ms}`;
   }
 
-  function renderTeams(){
-    tableBody.innerHTML = "";
-    const now = Date.now();
-    const rows = Array.from(state.values()).sort((a,b)=> (b._ts||0)-(a._ts||0));
-    rows.forEach(row=>{
-      const t = row.telemetry || {};
-      const online = (now - (row._ts||0)) < 5000;
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${row.takim}</td>
-        <td class="${online?'online':'offline'}">${online?'Online':'Offline'}</td>
-        <td>${fmtGps(t.gps_saati)}</td>
-        <td>${t.iha_enlem??''}, ${t.iha_boylam??''}</td>
-        <td>${t.iha_irtifa??''}</td>
-        <td>${t.iha_hiz??''}</td>
-        <td>${t.iha_yonelme??''}</td>
-        <td>${t.iha_batarya??''}%</td>
-      `;
-      tableBody.appendChild(tr);
-    });
+  function renderTeams() {
+      const now = Date.now();
+
+      // 1) Eski takımları offline yap
+      state.forEach((row, key) => {
+          if (now - (row._ts || 0) > 2000) {
+              row.telemetry = {};   // Boşalt
+          }
+      });
+
+      // 2) Tabloyu yeniden çiz
+      tableBody.innerHTML = "";
+
+      // SIRALAMA YOK: Map insertion order’ı ile gezeceğiz
+      const rows = Array.from(state.values());
+
+      rows.forEach(row => {
+          const t = row.telemetry || {};
+          const online = (now - (row._ts||0)) < 2000;
+
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+              <td>${row.takim}</td>
+              <td class="${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</td>
+              <td>${fmtGps(t.gps_saati)}</td>
+              <td>${t.iha_enlem ?? ''}, ${t.iha_boylam ?? ''}</td>
+              <td>${t.iha_irtifa ?? ''}</td>
+              <td>${t.iha_dikilme ?? ''}</td>
+              <td>${t.iha_yonelme ?? ''}</td>
+              <td>${t.iha_yatis ?? ''}</td>
+              <td>${t.iha_hiz ?? ''}</td>
+              <td>${t.iha_batarya ?? ''}%</td>
+              <td>${t.iha_otonom ?? ''}</td>
+              <td>${t.iha_kilitlenme ?? ''}</td>
+              <td>${t.hedef_merkez_X ?? ''}</td>
+              <td>${t.hedef_merkez_Y ?? ''}</td>
+              <td>${t.hedef_genislik ?? ''}</td>
+              <td>${t.hedef_yukseklik ?? ''}</td>
+          `;
+          tableBody.appendChild(tr);
+      });
+
+      // 3) 2 saniyedir telemetri yoksa geofence ihlalini kaldır
+      state.forEach((row, key) => {
+          const last = row._ts || 0;
+          if (now - last > 2000) {
+              if (fenceState[row.takim]) {
+                  fenceState[row.takim].outside = false;
+              }
+          }
+      });
+
+      updateFenceUI(); // Uyarıyı güncelle
   }
+
+
+
+  // === Çoklu takım geofence durumu (GLOBAL) ===
+  const fenceState = {};  // ör: fenceState[20] = { outside:true, since:..., last:... }
+
+  // Uyarı kutusunu güncelle
+  function updateFenceUI() {
+    const box      = document.getElementById("fenceWarn");
+    const listEl   = document.getElementById("fenceWarnTeams");
+    const detailEl = document.getElementById("fenceOutsideInfo");
+
+    const now = Date.now();
+
+    // WATCHDOG: 3 sn'dir ihlal paketi gelmiyorsa, içerde say
+    Object.entries(fenceState).forEach(([team, st]) => {
+      if (st.outside && now - (st.last || 0) > 3000) {
+        st.outside = false;
+      }
+    });
+
+    // Hâlâ dışarıda olan takımlar
+    const outside = Object.entries(fenceState)
+      .filter(([team, st]) => st.outside)
+      .map(([team, st]) => ({
+        team,
+        sec: Math.max(0, Math.round((now - st.since) / 1000))
+      }));
+
+    if (!outside.length) {
+      if (box)      box.style.display = "none";
+      if (listEl)   listEl.textContent = "";
+      if (detailEl) detailEl.textContent = "";
+      return;
+    }
+
+    if (box)    box.style.display = "block";
+    if (listEl) listEl.textContent = outside
+      .map(o => `Takım ${o.team} (${o.sec} sn)`)
+      .join(" • ");
+    if (detailEl) detailEl.textContent = "";
+  }
+
+  // Geofence violation: yeni ihlal gelince süreyi gerektiğinde resetle
+  socket.on("geofence_violation", (e) => {
+    const team = e.takim;
+    const now  = Date.now();
+
+    if (!fenceState[team] || fenceState[team].outside === false) {
+      // İlk kez çıktığı an veya daha önce içeri girmişti → sayaç sıfırdan başlasın
+      fenceState[team] = { outside: true, since: now, last: now };
+    } else {
+      // Zaten dışarıdaysa sadece son paket zamanını güncelle
+      fenceState[team].last = now;
+    }
+
+    updateFenceUI();
+  });
+
+  socket.on("geofence_ok", (e) => {
+    const team = e.takim;
+    if (fenceState[team]) {
+      // Tamamen temizle → tekrar çıkarsa yeni since ile başlar
+      delete fenceState[team];
+    }
+    updateFenceUI();
+  });
+
+
+  // Her saniye bir kere sadece ekrana yansıt (watchdog da burada çalışıyor)
+  setInterval(updateFenceUI, 1000);
+
+
+
+
+
 
   function renderEnemies(attacker, enemies){
     enemyBody.innerHTML = "";
@@ -366,6 +487,10 @@
     if (rawbox) rawbox.textContent = JSON.stringify({takim, telemetry, sunucusaati}, null, 2);
     setLE(new Date().toLocaleTimeString());
   });
+  // Telemetri tamamen kesilse bile offline'a düşsün diye periyodik redraw
+  setInterval(renderTeams, 1000);
+
+
 </script>
 
 <script>
@@ -746,12 +871,15 @@
   })();
 
   // --- Tekil değişkenler (bir kez tanımla) ---
-  let map, ownMarker;
-  const enemyMarkers = new Map();  // takım_no -> marker
+  let map, ownMarker;                      // ✅ EKLE
+  const enemyMarkers = new Map();          // ✅ EKLE
+
+  const OWN_TEAM = 25;   // ← burayı kendi takım numarana göre ayarla
   let hssLayer = L.layerGroup();
   const hssDrawLayer = L.featureGroup().addTo(hssLayer);
   let editGroup; // ← ortak düzenleme grubu
   let fenceLayer, fenceLabelLayer;
+
 
   // Sunucu HSS çizimi
   function renderHSS(items){
@@ -1062,8 +1190,6 @@
 
 
 
-
-
     function refreshFences(items){
       fenceLayer.clearLayers();
       // editGroup içindeki eski polygonları temizlemek istersen:
@@ -1100,82 +1226,6 @@
         renderFenceCornerLabels(items);
       });
     }
-
-
-
-
-
-
-
-
-    // Dışarıya çıkıldı/kalınıyor: sayaç başlat + güncelle
-    socket.on('geofence_violation', (e)=>{
-      const box    = document.getElementById('fenceWarn');
-      const timeEl = document.getElementById('fenceWarnTime');
-      const infoEl = document.getElementById('fenceOutsideInfo');
-
-      // Son ihlal paketinin zamanını not et (watchdog için)
-      window._lastViolation = Date.now();
-
-      // Geçişse (içeriden -> dışarı) sayaç 0'dan başlasın
-      if (!window._isOutside) {
-        window._isOutside    = true;
-        window._outsideSince = Date.now();
-
-        // CANLI sayaç (1 Hz) + WATCHDOG (paket kesilirse içeri varsay)
-        if (!window._outsideTick) {
-          window._outsideTick = setInterval(()=>{
-            // 1) Paket kesilmişse ya da gecikmişse (örn. 1.5 sn’den uzun), içeri varsay ve kapat
-            if (window._isOutside && Date.now() - window._lastViolation > 1500) {
-              handleInside();        // aşağıda tanımlı
-              return;
-            }
-            // 2) Normal sayaç güncellemesi
-            const infoEl2 = document.getElementById('fenceOutsideInfo');
-            if (window._isOutside && window._outsideSince && infoEl2) {
-              const secs = Math.max(0, Math.round((Date.now() - window._outsideSince)/1000));
-              infoEl2.textContent = ` • Dışarıda: ${secs} sn`;
-            }
-          }, 1000);
-        }
-      }
-
-      // Uyarıyı göster & saat yaz
-      if (box) box.style.display = 'block';
-      if (timeEl) timeEl.textContent = ' • ' + new Date(e.utc).toLocaleTimeString();
-
-      // İlk frame’de sayıyı hemen bastır
-      if (infoEl && window._outsideSince) {
-        const secs = Math.max(0, Math.round((Date.now() - window._outsideSince)/1000));
-        infoEl.textContent = ` • Dışarıda: ${secs} sn`;
-      }
-    });
-
-    // İçeri girildi: server bildirimi geldiğinde kesin kapat
-    socket.on('geofence_ok', ()=>{
-      handleInside();
-    });
-
-    // Ortak kapatma/sıfırlama
-    function handleInside(){
-      const box    = document.getElementById('fenceWarn');
-      const timeEl = document.getElementById('fenceWarnTime');
-      const infoEl = document.getElementById('fenceOutsideInfo');
-
-      window._isOutside    = false;
-      window._outsideSince = null;
-      window._lastViolation= 0;
-
-      if (window._outsideTick) {
-        clearInterval(window._outsideTick);
-        window._outsideTick = null;
-      }
-
-      if (box)    box.style.display = 'none';
-      if (timeEl) timeEl.textContent = '';
-      if (infoEl) infoEl.textContent = '';
-    }
-
   }
 
   // --- Marker yardımcıları ---
@@ -1198,44 +1248,97 @@
     const b = L.latLngBounds(pts);
     map.fitBounds(b.pad(0.2));
   }
+  fitAllOnce._done = false;
 
-  // --- Telemetri geldiğinde haritayı güncelle ---
-  const _origTelemetryHandler = (data) => {
+const _origTelemetryHandler = (data) => {
     const { takim, telemetry, enemies } = data;
 
-    // Kendi İHA
-    const lat = parseFloat(telemetry?.iha_enlem);
-    const lon = parseFloat(telemetry?.iha_boylam);
-    if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
-      const popSelf = `Takım ${takim}<br>Alt: ${telemetry?.iha_irtifa ?? '—'} m<br>Hız: ${telemetry?.iha_hiz ?? '—'} m/s`;
-      if (!ownMarker) {
-        ownMarker = makeOwnMarker(lat, lon, popSelf);
-        map.setView([lat, lon], 16);
-      } else {
-        ownMarker.setLatLng([lat, lon]).setPopupContent(popSelf);
-      }
+    // --- KENDİ İHA (her zaman OWN_TEAM) ---
+    let ownData = null;
+
+    if (takim === OWN_TEAM) {
+        ownData = telemetry;
+    } else {
+        // enemies içinde OWN_TEAM'i ara
+        (enemies || []).forEach(e => {
+            if (e.takim_numarasi === OWN_TEAM) {
+                ownData = e;
+            }
+        });
     }
 
-    // Düşmanlar
-    const seen = new Set();
+    // Kendi marker’ı çiz
+    if (ownData) {
+        const lat = parseFloat(ownData.iha_enlem);
+        const lon = parseFloat(ownData.iha_boylam);
+        if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
+            const pop = `Takım ${OWN_TEAM}<br>Alt: ${ownData.iha_irtifa ?? '—'} m<br>Hız: ${ownData.iha_hiz ?? '—'} m/s`;
+            if (!ownMarker) {
+                ownMarker = makeOwnMarker(lat, lon, pop);
+                map.setView([lat, lon], 15);
+            } else {
+                ownMarker.setLatLng([lat, lon]).setPopupContent(pop);
+            }
+        }
+    }
+
+    // --- DÜŞMANLARI ÇİZ ---
+    const enemyList = [];
+
+    // 1: Eğer paketi gönderen düşmansa
+    if (takim !== OWN_TEAM) {
+        enemyList.push({
+            takim_numarasi: takim,
+            iha_enlem: telemetry.iha_enlem,
+            iha_boylam: telemetry.iha_boylam,
+            iha_irtifa: telemetry.iha_irtifa,
+            iha_hiz: telemetry.iha_hiz,
+            iha_yonelme: telemetry.iha_yonelme
+        });
+    }
+
+    // 2: enemies listesindeki tüm diğer takımlar
     (enemies || []).forEach(e => {
-      const tid = e.takim_numarasi;
-      const elat = parseFloat(e.iha_enlem), elon = parseFloat(e.iha_boylam);
-      if (Number.isNaN(elat) || Number.isNaN(elon)) return;
-      seen.add(tid);
-      const hiz = (e.iha_hizi ?? e.iha_hiz ?? '—'); // geriye uyumlu
-      const popEnemy = `Düşman Takım ${tid}<br>Alt: ${e.iha_irtifa ?? '—'} m<br>Hız: ${hiz} m/s`;
-
-      if (enemyMarkers.has(tid)) {
-        enemyMarkers.get(tid).setLatLng([elat, elon]).setPopupContent(popEnemy);
-      } else {
-        enemyMarkers.set(tid, makeEnemyMarker(elat, elon, popEnemy));
-      }
+        if (e.takim_numarasi !== OWN_TEAM) {
+            enemyList.push(e);
+        }
     });
-    enemyMarkers.forEach((m, tid) => { if (!seen.has(tid)) { map.removeLayer(m); enemyMarkers.delete(tid); } });
 
-    if (!fitAllOnce._done) { fitAllOnce(); fitAllOnce._done = true; }
-  };
+    // --- Düşman markerlarını güncelle ---
+    const seen = new Set();
+
+    enemyList.forEach(e => {
+        const tid = e.takim_numarasi;
+        const lat = parseFloat(e.iha_enlem);
+        const lon = parseFloat(e.iha_boylam);
+        if (Number.isNaN(lat) || Number.isNaN(lon)) return;
+
+        seen.add(tid);
+
+        const pop = `Düşman Takım ${tid}<br>Alt: ${e.iha_irtifa ?? '—'} m<br>Hız: ${e.iha_hiz ?? '—'} m/s`;
+
+        if (enemyMarkers.has(tid)) {
+            enemyMarkers.get(tid).setLatLng([lat, lon]).setPopupContent(pop);
+        } else {
+            enemyMarkers.set(tid, makeEnemyMarker(lat, lon, pop));
+        }
+    });
+
+    // --- Silinmesi gereken düşman markerlarını kaldır ---
+    enemyMarkers.forEach((m, tid) => {
+        if (!seen.has(tid)) {
+            map.removeLayer(m);
+            enemyMarkers.delete(tid);
+        }
+    });
+
+    // Haritayı ilk kez tüm markerlara göre ortala
+    if (!fitAllOnce._done) {
+        fitAllOnce();
+        fitAllOnce._done = true;
+    }
+};
+
 
   // Var olan telemetry_update handler'ından SONRA çalışacak ek dinleyici
   socket.on('telemetry_update', (data) => {
