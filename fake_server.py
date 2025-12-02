@@ -34,6 +34,9 @@ _latest_telemetry = {}
 _TELEMETRY_STALE_SEC = 5.0   # örn. 5 saniye; gerçek testte network koşullarına göre arttırabilirsin
 TEAM_NO = None
 
+# HSS'ler uçağa gönderilsin mi?
+HSS_SEND_ENABLED = True
+
 TOKEN = "fake_token_123"
 SESSION_COOKIE = "sessionid"
 
@@ -149,6 +152,33 @@ def list_hss():
     con.close()
     keys = ["id","name","lat","lon","radius","active","updated_at"]
     return [dict(zip(keys, r)) for r in rows]
+
+def distance_m(lat1, lon1, lat2, lon2):
+    """Iki enlem/boylam arasındaki mesafeyi metre cinsinden hesapla (haversine)."""
+    R = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def is_inside_hss(lat, lon):
+    """Aktif HSS'lerden herhangi birinin içinde mi?"""
+    try:
+        for it in list_hss():
+            h_lat = float(it["lat"])
+            h_lon = float(it["lon"])
+            r     = float(it["radius"])
+            d = distance_m(lat, lon, h_lat, h_lon)
+            if d <= r:
+                return True
+    except Exception as e:
+        print("⚠️ is_inside_hss hata:", e)
+    return False
+
 
 def insert_hss(name, lat, lon, radius):
     con = sqlite3.connect(DB_PATH); cur = con.cursor()
@@ -461,6 +491,21 @@ def validate_telemetry(t):
 
 _enemy_angle = 0.0
 
+
+@app.route("/api/hss_send_flag", methods=["POST"])
+def hss_send_flag():
+    global HSS_SEND_ENABLED
+    if not ok_auth():
+        return "401", 401
+
+    d = request.get_json(silent=True) or {}
+    # enabled true/false bekliyoruz
+    HSS_SEND_ENABLED = bool(d.get("enabled"))
+    print("🔁 HSS_SEND_ENABLED =", HSS_SEND_ENABLED)
+    return jsonify({"ok": True, "enabled": HSS_SEND_ENABLED}), 200
+
+
+
 @app.route("/api/telemetri_gonder", methods=["POST"])
 def telemetri():
     # TEAM_NO artık yayın/ayrım için kullanılmıyor; projede başka yerde kullanıyorsanız kalsın.
@@ -510,6 +555,25 @@ def telemetri():
             socketio.emit("geofence_ok", {"takim": takim, "utc": now_iso()})
     except Exception as e:
         print("⚠️ Geofence kontrol hatası:", e)
+
+    # 3b) (Opsiyonel) HSS kontrolü — gönderene uygula
+    try:
+        lat = float(t.get("iha_enlem"))
+        lon = float(t.get("iha_boylam"))
+
+        # HSS_SEND_ENABLED kapalıysa kimseyi HSS içinde sayma
+        if HSS_SEND_ENABLED and is_inside_hss(lat, lon):
+            socketio.emit("hss_inside", {
+                "takim": takim,
+                "lat": lat,
+                "lon": lon,
+                "utc": now_iso()
+            })
+        else:
+            # ya HSS yoktur, ya dışarıdadır, ya da HSS tamamen devredışı
+            socketio.emit("hss_ok", {"takim": takim, "utc": now_iso()})
+    except Exception as e:
+        print("⚠️ HSS kontrol hatası:", e)
 
     # 4) (Opsiyonel) DB'ye yaz
     try:
@@ -600,9 +664,8 @@ def telemetri():
         "hss_koordinat_bilgileri": [
             {"id": it["id"], "hssEnlem": it["lat"], "hssBoylam": it["lon"], "hssYaricap": it["radius"]}
             for it in list_hss()
-        ]
+        ] if HSS_SEND_ENABLED else []
     }), 200
-
 
 
 @app.route("/api/kilitlenme_bilgisi", methods=["POST"])

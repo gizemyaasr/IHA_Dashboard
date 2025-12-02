@@ -66,6 +66,17 @@
     font-weight: 600;
     text-shadow: none;                    /* beyaz kutuda gölge istemiyoruz */
   }
+  .hss-toggle-btn {
+    background: #11151a;
+    border: 1px solid #6b21a8;
+    color: #e5e7eb;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .hss-toggle-btn.off {
+    opacity: 0.4;
+  }
 
 
 </style>
@@ -85,6 +96,7 @@
 
 </head>
 <body>
+
   <div class="wrap">
     <div>
       <h1>IHA Telemetri Dashboard</h1>
@@ -97,21 +109,25 @@
         <div class="muted">Kendi İHA: mavi • Düşmanlar: kırmızı • HSS: mor daire</div>
       </div>
 
-      <div class="card">
-        <h2>Son Paket (Ham)</h2>
-        <pre id="rawbox">{}</pre>
-      </div>
-    </div>
+
+
+
       <div id="fenceWarn" class="card"
            style="display:none;background:#2b0e10;border:1px solid #ef4444">
         <b>Geofence ihlali!</b>
         <div id="fenceWarnTeams" style="margin-top:4px;font-weight:600;color:#fff">
-          <!-- Buraya takım listesi gelecek -->
         </div>
         <div id="fenceOutsideInfo" style="opacity:.85;font-size:14px;margin-top:2px">
-          <!-- Buraya süre bilgisi gelecek -->
         </div>
       </div>
+
+      <div id="hssWarn" class="card"
+           style="display:none;background:#24113a;border:1px solid #6b21a8">
+        <b style="color:#e5e7eb">HSS bölgesi uyarısı</b>
+        <div id="hssWarnText" style="margin-top:4px;font-weight:600;color:#e5e7eb;font-size:14px">
+        </div>
+      </div>
+
 
 
 
@@ -143,6 +159,11 @@
         </table>
       </div>
 
+      <div class="card">
+        <h2>Son Paket (Ham)</h2>
+        <pre id="rawbox">{}</pre>
+      </div>
+
     <div class="card">
       <h2>Son Düşman Listesi</h2>
       <table id="enemyTable">
@@ -170,7 +191,7 @@
       </div>
 
 
-  <div class="card">
+    <div class="card">
       <h2>Kamikaze Bildirimleri</h2>
       <table id="kzLiveTable">
         <thead>
@@ -458,6 +479,79 @@
   setInterval(updateFenceUI, 1000);
 
 
+  // === HSS uyarı durumu (GLOBAL) ===
+  const hssState = {}; // ör: hssState[25] = { inside:true, since:..., last:... }
+  const HSS_MAX_SEC = 10; // HSS içinde kalabileceğin toplam süre (sn) — istersen burayı değiştir
+
+  function updateHSSUI() {
+    const box    = document.getElementById("hssWarn");
+    const textEl = document.getElementById("hssWarnText");
+    if (!box || !textEl) return;
+
+    const now = Date.now();
+
+    // WATCHDOG: 3 sn'dir "hss_inside" paketi gelmiyorsa, içerde sayma
+    Object.entries(hssState).forEach(([team, st]) => {
+      if (st.inside && now - (st.last || 0) > 3000) {
+        st.inside = false;
+      }
+    });
+
+    // Hâlâ HSS içinde olan takımlar
+    const insideTeams = Object.entries(hssState)
+      .filter(([team, st]) => st.inside)
+      .map(([team, st]) => {
+        const elapsed = (now - st.since) / 1000.0;
+        const remain  = HSS_MAX_SEC - elapsed;
+        return {
+          team,
+          elapsed: Math.max(0, Math.round(elapsed)),
+          remain:  Math.max(0, Math.round(remain))
+        };
+      })
+      // sadece pozitif kalan süresi olanları göstermek istersen:
+      // .filter(o => o.remain > 0);
+
+    if (!insideTeams.length) {
+      box.style.display = "none";
+      textEl.textContent = "";
+      return;
+    }
+
+    box.style.display = "block";
+    textEl.textContent = insideTeams
+      .map(o => `Takım ${o.team}: HSS içinde ${o.elapsed} sn (kalan ${o.remain} sn)`)
+      .join(" • ");
+  }
+
+  // Sunucudan gelen HSS event'leri
+  socket.on("hss_inside", (e) => {
+    const team = e.takim;
+    const now  = Date.now();
+
+    if (!hssState[team] || hssState[team].inside === false) {
+      // ilk kez HSS içine girdi
+      hssState[team] = { inside: true, since: now, last: now };
+    } else {
+      // zaten içerde → sadece son paketi güncelle
+      hssState[team].last = now;
+    }
+
+    updateHSSUI();
+  });
+
+  socket.on("hss_ok", (e) => {
+    const team = e.takim;
+    if (!hssState[team]) return;
+    hssState[team].inside = false;
+    updateHSSUI();
+  });
+
+  // Her saniye HSS uyarısını tekrar hesapla (kalan süreyi güncellemek için)
+  setInterval(updateHSSUI, 1000);
+
+
+
 
 
 
@@ -480,6 +574,7 @@
 
   // 📡 Sunucudan yayınlanan telemetri
   socket.on('telemetry_update', data=>{
+    console.log("TELEMETRY_UPDATE:", data);
     const {takim, telemetry, sunucusaati, enemies} = data;
     state.set(takim, { takim, telemetry, _ts: Date.now() });
     renderTeams();
@@ -879,6 +974,8 @@
   const hssDrawLayer = L.featureGroup().addTo(hssLayer);
   let editGroup; // ← ortak düzenleme grubu
   let fenceLayer, fenceLabelLayer;
+  let hssVisible = true;
+
 
 
   // Sunucu HSS çizimi
@@ -922,7 +1019,49 @@
     }).addTo(map);
 
     hssLayer.addTo(map);
+
+    // === HSS Aç/Kapa butonu ===
+    const hssControl = L.control({ position: 'topright' });
+
+    hssControl.onAdd = function (map) {
+      const btn = L.DomUtil.create('button', 'leaflet-bar hss-toggle-btn');
+      btn.type = 'button';
+      btn.innerHTML = 'HSS';
+      btn.title = 'HSS göster / gizle';
+
+      L.DomEvent.disableClickPropagation(btn);
+
+      L.DomEvent.on(btn, 'click', function (e) {
+        L.DomEvent.stop(e);
+
+        // 1) UI tarafında layer aç/kapa
+        hssVisible = !hssVisible;
+        if (hssVisible) {
+          map.addLayer(hssLayer);
+          btn.classList.remove('off');
+        } else {
+          map.removeLayer(hssLayer);
+          btn.classList.add('off');
+        }
+
+        // 2) Sunucuya "uçağa HSS gönder/gönderme" bilgisini gönder
+        fetch("/api/hss_send_flag", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + (window.AUTH_TOKEN || "fake_token_123")
+          },
+          body: JSON.stringify({ enabled: hssVisible })
+        }).catch(err => console.error("HSS flag hata:", err));
+      });
+
+      return btn;
+    };
+
+    hssControl.addTo(map);
+
     map.setView([39.0, 35.0], 5);
+
     // Qt WebView/grid ölçü düzeltmesi
     setTimeout(() => map.invalidateSize(), 300);
 
