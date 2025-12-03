@@ -67,13 +67,15 @@
     text-shadow: none;                    /* beyaz kutuda gölge istemiyoruz */
   }
   .hss-toggle-btn {
-    background: #11151a;
-    border: 1px solid #6b21a8;
-    color: #e5e7eb;
-    padding: 4px 8px;
-    cursor: pointer;
-    font-size: 12px;
+      background: #11151a;
+      border: 1px solid #6b21a8;
+      color: #e5e7eb;
+      padding: 10px 16px;      /* butonu büyütür */
+      font-size: 16px;         /* yazıyı büyütür */
+      border-radius: 6px;      /* daha hoş görünüm */
+      cursor: pointer;
   }
+
   .hss-toggle-btn.off {
     opacity: 0.4;
   }
@@ -95,13 +97,19 @@
 
 
 </head>
-<body>
+  <body class="wrap">
+      <div>
+        <h1>IHA Telemetri Dashboard</h1>
+        <div class="muted">Anlık veri (Socket.IO) • Son olay: <span id="lastEvent">—</span></div>
+      </div>
 
-  <div class="wrap">
-    <div>
-      <h1>IHA Telemetri Dashboard</h1>
-      <div class="muted">Anlık veri (Socket.IO) • Son olay: <span id="lastEvent">—</span></div>
-    </div>
+      <div id="serverClock"
+          style="position:absolute; top:15px; right:25px;
+                 font-size:28px; font-weight:bold;
+                 color:white; z-index:9999;">
+         --:--:--
+     </div>
+
 
       <div class="card">
         <h2>Canlı Harita</h2>
@@ -164,15 +172,6 @@
         <pre id="rawbox">{}</pre>
       </div>
 
-    <div class="card">
-      <h2>Son Düşman Listesi</h2>
-      <table id="enemyTable">
-        <thead>
-          <tr><th>Attacker</th><th>Enemy Team</th><th>Lat, Lon</th><th>Alt</th><th>Hız</th><th>Yaw</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
 
 
 
@@ -481,7 +480,7 @@
 
   // === HSS uyarı durumu (GLOBAL) ===
   const hssState = {}; // ör: hssState[25] = { inside:true, since:..., last:... }
-  const HSS_MAX_SEC = 10; // HSS içinde kalabileceğin toplam süre (sn) — istersen burayı değiştir
+
 
   function updateHSSUI() {
     const box    = document.getElementById("hssWarn");
@@ -502,15 +501,11 @@
       .filter(([team, st]) => st.inside)
       .map(([team, st]) => {
         const elapsed = (now - st.since) / 1000.0;
-        const remain  = HSS_MAX_SEC - elapsed;
         return {
           team,
-          elapsed: Math.max(0, Math.round(elapsed)),
-          remain:  Math.max(0, Math.round(remain))
+          elapsed: Math.max(0, Math.round(elapsed))
         };
-      })
-      // sadece pozitif kalan süresi olanları göstermek istersen:
-      // .filter(o => o.remain > 0);
+      });
 
     if (!insideTeams.length) {
       box.style.display = "none";
@@ -520,7 +515,7 @@
 
     box.style.display = "block";
     textEl.textContent = insideTeams
-      .map(o => `Takım ${o.team}: HSS içinde ${o.elapsed} sn (kalan ${o.remain} sn)`)
+      .map(o => `Takım ${o.team}: HSS içinde ${o.elapsed} sn`)
       .join(" • ");
   }
 
@@ -547,7 +542,7 @@
     updateHSSUI();
   });
 
-  // Her saniye HSS uyarısını tekrar hesapla (kalan süreyi güncellemek için)
+  // Her saniye HSS uyarısını tekrar hesapla (geçen süreyi güncellemek için)
   setInterval(updateHSSUI, 1000);
 
 
@@ -556,29 +551,12 @@
 
 
 
-  function renderEnemies(attacker, enemies){
-    enemyBody.innerHTML = "";
-    (enemies || []).forEach(e=>{
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${attacker}</td>
-        <td>${e.takim_numarasi}</td>
-        <td>${e.iha_enlem}, ${e.iha_boylam}</td>
-        <td>${e.iha_irtifa}</td>
-        <td>${e.iha_hiz}</td>
-        <td>${e.iha_yonelme}</td>
-      `;
-      enemyBody.appendChild(tr);
-    });
-  }
-
   // 📡 Sunucudan yayınlanan telemetri
   socket.on('telemetry_update', data=>{
     console.log("TELEMETRY_UPDATE:", data);
     const {takim, telemetry, sunucusaati, enemies} = data;
     state.set(takim, { takim, telemetry, _ts: Date.now() });
     renderTeams();
-    renderEnemies(takim, enemies);
     if (rawbox) rawbox.textContent = JSON.stringify({takim, telemetry, sunucusaati}, null, 2);
     setLE(new Date().toLocaleTimeString());
   });
@@ -1489,12 +1467,31 @@ const _origTelemetryHandler = (data) => {
   document.addEventListener('DOMContentLoaded', () => {
     initMap();
   });
+
+  // === SUNUCU SAATİ ===
+  function updateServerClock() {
+    const el = document.getElementById("serverClock");
+    if (!el) return;
+
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+
+    el.textContent = `${hh}:${mm}:${ss}`;
+  }
+
+  // Her saniye güncelle
+  setInterval(updateServerClock, 1000);
+  updateServerClock();
+
+
+
+
 </script>
 
 
 
-
-
-
 </body>
+
 </html>
