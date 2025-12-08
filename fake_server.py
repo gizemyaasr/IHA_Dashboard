@@ -9,7 +9,6 @@ from flask import send_from_directory
 import os
 import secrets
 
-
 app = Flask(__name__)
 
 CORS(app, supports_credentials=True)
@@ -20,22 +19,22 @@ VALID_USERS = [
     {"kadi": "anafarta", "sifre": "123", "takim": 25},
     {"kadi": "yem", "sifre": "123456", "takim": 20},
     {"kadi": "deneme", "sifre": "deneme", "takim": 1}
-
 ]
 
-
-ISSUED_TOKENS = {}   # token → team
-
+ISSUED_TOKENS = {}  # token → team
 
 # In-memory en son telemetri kayıtları: {takim_numarasi: {"telemetry": t, "ts": time.time()}}
 _latest_telemetry = {}
 
 # (Opsiyonel) kaç saniyeden eski telemetry'i düşman listesinden çıkarmak istersin
-_TELEMETRY_STALE_SEC = 5.0   # örn. 5 saniye; gerçek testte network koşullarına göre arttırabilirsin
+_TELEMETRY_STALE_SEC = 5.0  # örn. 5 saniye; gerçek testte network koşullarına göre arttırabilirsin
 TEAM_NO = None
 
 # HSS'ler uçağa gönderilsin mi?
 HSS_SEND_ENABLED = True
+
+# HSS sisteminin aktif/pasif durumu (UI'den kontrol edilebilir)
+HSS_SYSTEM_ACTIVE = False  # Başlangıçta KAPALI
 
 TOKEN = "fake_token_123"
 SESSION_COOKIE = "sessionid"
@@ -45,14 +44,15 @@ _last_telemetry_ts = {}
 _RATE_PERIOD = 0.5  # saniye → 2 Hz
 
 # --- HSS pencere kontrolü ---
-_HSS_EMPTY1_SEC = 10    # ilk 10 saniye boş
-_HSS_ACTIVE_SEC = 10    # sonraki 10 saniye dolu
+_HSS_EMPTY1_SEC = 10  # ilk 10 saniye boş
+_HSS_ACTIVE_SEC = 10  # sonraki 10 saniye dolu
 _SERVER_START_MONO = time.monotonic()
 
 # --- SQLite setup ---
 import os, sqlite3, json
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "iha_logs.db")
+
 
 def init_db():
     con = sqlite3.connect(DB_PATH)
@@ -147,11 +147,13 @@ def list_fences():
 
 
 def list_hss():
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     rows = cur.execute("SELECT id,name,lat,lon,radius,active,updated_at FROM hss WHERE active=1 ORDER BY id").fetchall()
     con.close()
-    keys = ["id","name","lat","lon","radius","active","updated_at"]
+    keys = ["id", "name", "lat", "lon", "radius", "active", "updated_at"]
     return [dict(zip(keys, r)) for r in rows]
+
 
 def distance_m(lat1, lon1, lat2, lon2):
     """Iki enlem/boylam arasındaki mesafeyi metre cinsinden hesapla (haversine)."""
@@ -171,7 +173,7 @@ def is_inside_hss(lat, lon):
         for it in list_hss():
             h_lat = float(it["lat"])
             h_lon = float(it["lon"])
-            r     = float(it["radius"])
+            r = float(it["radius"])
             d = distance_m(lat, lon, h_lat, h_lon)
             if d <= r:
                 return True
@@ -181,28 +183,37 @@ def is_inside_hss(lat, lon):
 
 
 def insert_hss(name, lat, lon, radius):
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     cur.execute("INSERT INTO hss(name,lat,lon,radius,active,updated_at) VALUES (?,?,?,?,1,?)",
                 (name, float(lat), float(lon), float(radius), now_iso()))
-    con.commit(); _id = cur.lastrowid; con.close()
+    con.commit();
+    _id = cur.lastrowid;
+    con.close()
     return _id
+
 
 def update_hss(hid, **fields):
     if not fields: return
     sets, args = [], []
-    for k in ("name","lat","lon","radius","active"):
+    for k in ("name", "lat", "lon", "radius", "active"):
         if k in fields: sets.append(f"{k}=?"); args.append(fields[k])
-    sets.append("updated_at=?"); args.append(now_iso())
+    sets.append("updated_at=?");
+    args.append(now_iso())
     args.append(int(hid))
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     cur.execute(f"UPDATE hss SET {', '.join(sets)} WHERE id=?", args)
-    con.commit(); con.close()
+    con.commit();
+    con.close()
+
 
 def delete_hss(hid):
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     cur.execute("DELETE FROM hss WHERE id=?", (int(hid),))
-    con.commit(); con.close()
-
+    con.commit();
+    con.close()
 
 
 def save_kamikaze_row(payload: dict):
@@ -211,9 +222,9 @@ def save_kamikaze_row(payload: dict):
     ts_utc = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
     kaynak = payload.get("kaynak_takim")  # yoksa None kalır
-    qr     = payload.get("qrMetni")
-    kb     = payload.get("kamikazeBaslangicZamani", {})
-    ke     = payload.get("kamikazeBitisZamani", {})
+    qr = payload.get("qrMetni")
+    kb = payload.get("kamikazeBaslangicZamani", {})
+    ke = payload.get("kamikazeBitisZamani", {})
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -223,6 +234,7 @@ def save_kamikaze_row(payload: dict):
     """, (ts_utc, kaynak, qr, json.dumps(kb), json.dumps(ke), json.dumps(payload)))
     conn.commit()
     conn.close()
+
 
 def query_kamikaze_history(kaynak=None, start=None, end=None, limit=1000):
     """UI tarih filtresi için socket’ten sorgulanır"""
@@ -237,9 +249,11 @@ def query_kamikaze_history(kaynak=None, start=None, end=None, limit=1000):
         sql += " AND kaynak_takim = ?"
         args.append(int(kaynak))
     if start:
-        sql += " AND ts_utc >= ?"; args.append(start)
+        sql += " AND ts_utc >= ?";
+        args.append(start)
     if end:
-        sql += " AND ts_utc <= ?"; args.append(end)
+        sql += " AND ts_utc <= ?";
+        args.append(end)
     sql += " ORDER BY ts_utc DESC LIMIT ?"
     args.append(int(limit))
 
@@ -248,10 +262,12 @@ def query_kamikaze_history(kaynak=None, start=None, end=None, limit=1000):
     for r in rows:
         try:
             r["baslangic_gps"] = json.loads(r["baslangic_gps"]) if r["baslangic_gps"] else None
-        except: pass
+        except:
+            pass
         try:
             r["bitis_gps"] = json.loads(r["bitis_gps"]) if r["bitis_gps"] else None
-        except: pass
+        except:
+            pass
     conn.close()
     return rows
 
@@ -282,8 +298,9 @@ def query_telemetry_history(takim=None, start_iso=None, end_iso=None, limit=1000
     con.close()
 
     # dict listeye çevir
-    keys = ["ts_utc","takim","enlem","boylam","irtifa","hiz","batarya"]
+    keys = ["ts_utc", "takim", "enlem", "boylam", "irtifa", "hiz", "batarya"]
     return [dict(zip(keys, r)) for r in rows]
+
 
 def query_locks_history(kaynak=None, kilitlenen=None, start_iso=None, end_iso=None, limit=1000):
     import sqlite3, json
@@ -291,13 +308,17 @@ def query_locks_history(kaynak=None, kilitlenen=None, start_iso=None, end_iso=No
            FROM locks WHERE 1=1"""
     params = []
     if kaynak not in (None, "", "null", "None"):
-        q += " AND kaynak_takim = ?"; params.append(int(kaynak))
+        q += " AND kaynak_takim = ?";
+        params.append(int(kaynak))
     if kilitlenen not in (None, "", "null", "None"):
-        q += " AND kilitlenen_takim = ?"; params.append(int(kilitlenen))
+        q += " AND kilitlenen_takim = ?";
+        params.append(int(kilitlenen))
     if start_iso:
-        q += " AND ts_utc >= ?"; params.append(start_iso)
+        q += " AND ts_utc >= ?";
+        params.append(start_iso)
     if end_iso:
-        q += " AND ts_utc <= ?"; params.append(end_iso)
+        q += " AND ts_utc <= ?";
+        params.append(end_iso)
     q += " ORDER BY ts_utc DESC"
     if limit:
         q += f" LIMIT {int(limit)}"
@@ -307,7 +328,7 @@ def query_locks_history(kaynak=None, kilitlenen=None, start_iso=None, end_iso=No
     rows = cur.execute(q, params).fetchall()
     con.close()
 
-    keys = ["ts_utc","kaynak_takim","kilitlenen_takim","otonom_kilitlenme","kilit_bitis_gps","extra_json"]
+    keys = ["ts_utc", "kaynak_takim", "kilitlenen_takim", "otonom_kilitlenme", "kilit_bitis_gps", "extra_json"]
     out = [dict(zip(keys, r)) for r in rows]
 
     for r in out:
@@ -315,7 +336,8 @@ def query_locks_history(kaynak=None, kilitlenen=None, start_iso=None, end_iso=No
         try:
             if isinstance(r["kilit_bitis_gps"], str) and r["kilit_bitis_gps"].strip():
                 r["kilit_bitis_gps"] = json.loads(r["kilit_bitis_gps"])
-        except: pass
+        except:
+            pass
 
         # extra_json’dan LOCK_FIELDS alanlarını çıkar
         r["hedef_merkez_X"] = r["hedef_merkez_Y"] = r["hedef_genislik"] = r["hedef_yukseklik"] = None
@@ -328,17 +350,18 @@ def query_locks_history(kaynak=None, kilitlenen=None, start_iso=None, end_iso=No
                 r["hedef_merkez_Y"] = ej.get("hedef_merkez_Y")
                 r["hedef_genislik"] = ej.get("hedef_genislik")
                 r["hedef_yukseklik"] = ej.get("hedef_yukseklik")
-        except: pass
+        except:
+            pass
 
         # artık istemiyoruz
         r.pop("extra_json", None)
     return out
 
 
-
 def utc_now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 def save_telemetry_row(takim, t):
     con = sqlite3.connect(DB_PATH)
@@ -358,6 +381,7 @@ def save_telemetry_row(takim, t):
     con.commit()
     con.close()
     print("📝 telemetry→DB takım=", takim)
+
 
 def save_lock_row(payload: dict):
     con = sqlite3.connect(DB_PATH)
@@ -386,10 +410,12 @@ def static_files(path):
 def dashboard():
     return send_file("ui.html")
 
+
 def server_now_dict():
     now = datetime.now(timezone.utc)
     return {"gun": now.day, "saat": now.hour, "dakika": now.minute,
-            "saniye": now.second, "milisaniye": int(now.microsecond/1000)}
+            "saniye": now.second, "milisaniye": int(now.microsecond / 1000)}
+
 
 def ok_auth():
     hdr = request.headers.get("Authorization", "")
@@ -409,18 +435,21 @@ def ok_auth():
     return False
 
 
-def deg2rad(d): return d*math.pi/180.0
-def rad2deg(r): return r*180.0/math.pi
+def deg2rad(d): return d * math.pi / 180.0
+
+
+def rad2deg(r): return r * 180.0 / math.pi
+
+
 def dest_from(lat, lon, bearing_deg, dist_m):
     R = 6371000.0
     br = deg2rad(bearing_deg)
     lat1, lon1 = deg2rad(lat), deg2rad(lon)
     d_R = dist_m / R
-    lat2 = math.asin(math.sin(lat1)*math.cos(d_R) + math.cos(lat1)*math.sin(d_R)*math.cos(br))
-    lon2 = lon1 + math.atan2(math.sin(br)*math.sin(d_R)*math.cos(lat1),
-                             math.cos(d_R)-math.sin(lat1)*math.sin(lat2))
+    lat2 = math.asin(math.sin(lat1) * math.cos(d_R) + math.cos(lat1) * math.sin(d_R) * math.cos(br))
+    lon2 = lon1 + math.atan2(math.sin(br) * math.sin(d_R) * math.cos(lat1),
+                             math.cos(d_R) - math.sin(lat1) * math.sin(lat2))
     return rad2deg(lat2), rad2deg(lon2)
-
 
 
 @app.route("/api/giris", methods=["POST"])
@@ -450,6 +479,7 @@ def giris():
 def sunucusaati():
     return jsonify(server_now_dict()), 200
 
+
 # Şeman: tam olarak kullanıcının gönderdiği alanlar
 REQUIRED_FIELDS = [
     "takim_numarasi", "iha_enlem", "iha_boylam", "iha_irtifa",
@@ -457,6 +487,7 @@ REQUIRED_FIELDS = [
     "iha_batarya", "iha_otonom", "iha_kilitlenme", "gps_saati"
 ]
 LOCK_FIELDS = ["hedef_merkez_X", "hedef_merkez_Y", "hedef_genislik", "hedef_yukseklik"]
+
 
 def validate_telemetry(t):
     try:
@@ -475,11 +506,11 @@ def validate_telemetry(t):
         if not (-90 <= float(t["iha_yatis"]) <= 90): return False
         if not (0 <= float(t["iha_hiz"]) <= 200): return False
         if not (0 <= int(t["iha_batarya"]) <= 100): return False
-        if int(t["iha_otonom"]) not in (0,1): return False
-        if int(t["iha_kilitlenme"]) not in (0,1): return False
+        if int(t["iha_otonom"]) not in (0, 1): return False
+        if int(t["iha_kilitlenme"]) not in (0, 1): return False
 
         gps = t["gps_saati"]
-        for k in ("saat","dakika","saniye","milisaniye"):
+        for k in ("saat", "dakika", "saniye", "milisaniye"):
             if k not in gps: return False
         if not (0 <= int(gps["saat"]) < 24): return False
         if not (0 <= int(gps["dakika"]) < 60): return False
@@ -488,6 +519,7 @@ def validate_telemetry(t):
         return True
     except Exception:
         return False
+
 
 _enemy_angle = 0.0
 
@@ -504,6 +536,34 @@ def hss_send_flag():
     print("🔁 HSS_SEND_ENABLED =", HSS_SEND_ENABLED)
     return jsonify({"ok": True, "enabled": HSS_SEND_ENABLED}), 200
 
+
+@app.route("/api/hss_toggle", methods=["POST"])
+def hss_toggle():
+    """HSS sistemini aktif/pasif yap (uçak tarafında kaçınma aktif/pasif)"""
+    global HSS_SYSTEM_ACTIVE
+    if not ok_auth():
+        return "401", 401
+
+    d = request.get_json(silent=True) or {}
+
+    # "active": true/false ile kontrol
+    if "active" in d:
+        HSS_SYSTEM_ACTIVE = bool(d["active"])
+    else:
+        # Toggle
+        HSS_SYSTEM_ACTIVE = not HSS_SYSTEM_ACTIVE
+
+    status = "AKTİF ✅" if HSS_SYSTEM_ACTIVE else "PASİF ❌"
+    print(f"🔄 HSS SİSTEMİ: {status}")
+
+    # SocketIO ile tüm clientlara bildir
+    socketio.emit("hss_system_status", {"hss_aktif": HSS_SYSTEM_ACTIVE})
+
+    return jsonify({
+        "ok": True,
+        "hss_aktif": HSS_SYSTEM_ACTIVE,
+        "message": f"HSS sistemi {status}"
+    }), 200
 
 
 @app.route("/api/telemetri_gonder", methods=["POST"])
@@ -562,7 +622,7 @@ def telemetri():
         lon = float(t.get("iha_boylam"))
 
         # HSS_SEND_ENABLED kapalıysa kimseyi HSS içinde sayma
-        if HSS_SEND_ENABLED and is_inside_hss(lat, lon):
+        if HSS_SEND_ENABLED and HSS_SYSTEM_ACTIVE and is_inside_hss(lat, lon):
             socketio.emit("hss_inside", {
                 "takim": takim,
                 "lat": lat,
@@ -664,7 +724,7 @@ def telemetri():
         "hss_koordinat_bilgileri": [
             {"id": it["id"], "hssEnlem": it["lat"], "hssBoylam": it["lon"], "hssYaricap": it["radius"]}
             for it in list_hss()
-        ] if HSS_SEND_ENABLED else []
+        ] if HSS_SYSTEM_ACTIVE else []
     }), 200
 
 
@@ -678,7 +738,7 @@ def kilitlenme():
     print("→ kilitlenme_bilgisi PAYLOAD:", data)
 
     kb = data.get("kilitlenmeBitisZamani", {})
-    if not all(k in kb for k in ("saat","dakika","saniye","milisaniye")):
+    if not all(k in kb for k in ("saat", "dakika", "saniye", "milisaniye")):
         print("❌ VALIDATION FAIL (kilitlenmeBitisZamani alanları eksik)")
         return "", 204
     try:
@@ -723,8 +783,8 @@ def kamikaze():
     d = request.get_json(silent=True) or {}
     kb = d.get("kamikazeBaslangicZamani", {})
     ke = d.get("kamikazeBitisZamani", {})
-    if not (all(k in kb for k in ("saat","dakika","saniye","milisaniye")) and
-            all(k in ke for k in ("saat","dakika","saniye","milisaniye")) and
+    if not (all(k in kb for k in ("saat", "dakika", "saniye", "milisaniye")) and
+            all(k in ke for k in ("saat", "dakika", "saniye", "milisaniye")) and
             ("qrMetni" in d)):
         return "", 204
 
@@ -766,6 +826,7 @@ def ok_auth_or_dev():
         return True
     return ok_auth()
 
+
 def ok_auth_or_public_hss():
     """
     HSS endpointi, yki_gorev_yazilimi'ndaki fetch_hss() ile
@@ -775,25 +836,29 @@ def ok_auth_or_public_hss():
     return ok_auth() or True  # HSS'i public yap
 
 
-
 @app.route("/api/hss", methods=["GET"])
 def api_hss_list():
     return jsonify({"ok": True, "items": list_hss()}), 200
+
 
 @app.route("/api/hss", methods=["POST"])
 def api_hss_create():
     if not ok_auth(): return "401", 401
     d = request.get_json(silent=True) or {}
-    name   = (d.get("name") or "").strip() or "HSS"
-    lat    = d.get("lat");  lon = d.get("lon");  radius = d.get("radius")
+    name = (d.get("name") or "").strip() or "HSS"
+    lat = d.get("lat")
+    lon = d.get("lon")
+    radius = d.get("radius")
     try:
         _id = insert_hss(name, float(lat), float(lon), float(radius))
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     try:
         socketio.emit("hss_update", {"items": list_hss()})
-    except: pass
+    except:
+        pass
     return jsonify({"ok": True, "id": _id}), 200
+
 
 @app.route("/api/hss/<int:hid>", methods=["PUT"])
 def api_hss_update(hid):
@@ -806,80 +871,97 @@ def api_hss_update(hid):
         return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify({"ok": True}), 200
 
+
 @app.route("/api/hss/<int:hid>", methods=["DELETE"])
 def api_hss_delete(hid):
     if not ok_auth(): return "401", 401
     delete_hss(hid)
     try:
         socketio.emit("hss_update", {"items": list_hss()})
-    except: pass
+    except:
+        pass
     return jsonify({"ok": True}), 200
 
 
 @app.route("/api/hss_koordinatlari", methods=["GET"])
 def hss_public():
-    items = list_hss()
-    # yarışma formatı
-    hss_list = [
-        {"id": it["id"], "hssEnlem": it["lat"], "hssBoylam": it["lon"], "hssYaricap": it["radius"]}
-        for it in items
-    ]
+    if not HSS_SEND_ENABLED:
+        hss_list = []
+    else:
+        items = list_hss()
+        hss_list = [
+            {"id": it["id"], "hssEnlem": it["lat"], "hssBoylam": it["lon"], "hssYaricap": it["radius"]}
+            for it in items
+        ]
+
     return jsonify({
         "sunucusaati": server_now_dict(),
         "hss_koordinat_bilgileri": hss_list,
-        "durum": "aktif" if hss_list else "bos"
+        "durum": "aktif" if hss_list else "bos",
+        "hss_aktif": HSS_SYSTEM_ACTIVE
     }), 200
+
 
 
 @app.route("/api/fences", methods=["GET"])
 def get_fences():
     return jsonify({"ok": True, "items": list_fences()}), 200
 
+
 @app.route("/api/fences", methods=["POST"])
 def create_fence():
     if not ok_auth(): return "401", 401
     data = request.get_json(silent=True) or {}
-    name  = (data.get("name") or "").strip() or "Geofence"
-    kind  = data.get("kind")
-    gj    = data.get("geojson")
+    name = (data.get("name") or "").strip() or "Geofence"
+    kind = data.get("kind")
+    gj = data.get("geojson")
     color = data.get("color") or "#ef4444"
     if kind not in ("polygon",) or not gj:
         return jsonify({"ok": False, "error": "invalid payload"}), 400
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     cur.execute("INSERT INTO fences(name,kind,geojson,color,updated_at) VALUES(?,?,?,?,?)",
                 (name, kind, json.dumps(gj), color, now_iso()))
-    con.commit(); con.close()
+    con.commit();
+    con.close()
     items = list_fences()
     socketio.emit("fences_update", {"items": items})
     return jsonify({"ok": True, "items": items}), 200
+
 
 @app.route("/api/fences/<int:fid>", methods=["PUT"])
 def update_fence(fid):
     if not ok_auth(): return "401", 401
     data = request.get_json(silent=True) or {}
-    name  = (data.get("name") or "").strip() or "Geofence"
-    kind  = data.get("kind")
-    gj    = data.get("geojson")
+    name = (data.get("name") or "").strip() or "Geofence"
+    kind = data.get("kind")
+    gj = data.get("geojson")
     color = data.get("color") or "#ef4444"
     if kind not in ("polygon",) or not gj:
-        return jsonify({"ok": False, "error":"invalid payload"}), 400
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+        return jsonify({"ok": False, "error": "invalid payload"}), 400
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     cur.execute("UPDATE fences SET name=?,kind=?,geojson=?,color=?,updated_at=? WHERE id=?",
                 (name, kind, json.dumps(gj), color, now_iso(), fid))
-    con.commit(); con.close()
+    con.commit();
+    con.close()
     items = list_fences()
     socketio.emit("fences_update", {"items": items})
     return jsonify({"ok": True, "items": items}), 200
 
+
 @app.route("/api/fences/<int:fid>", methods=["DELETE"])
 def delete_fence(fid):
     if not ok_auth(): return "401", 401
-    con = sqlite3.connect(DB_PATH); cur = con.cursor()
+    con = sqlite3.connect(DB_PATH);
+    cur = con.cursor()
     cur.execute("DELETE FROM fences WHERE id=?", (fid,))
-    con.commit(); con.close()
+    con.commit();
+    con.close()
     items = list_fences()
     socketio.emit("fences_update", {"items": items})
     return jsonify({"ok": True, "items": items}), 200
+
 
 def point_in_polygon(lat, lon, polygon_latlon):
     # polygon_latlon: [[lat,lon], ...] (ilk/son kapanmasa da işler)
@@ -889,10 +971,11 @@ def point_in_polygon(lat, lon, polygon_latlon):
     n = len(pts)
     for i in range(n):
         x1, y1 = pts[i]
-        x2, y2 = pts[(i+1) % n]
+        x2, y2 = pts[(i + 1) % n]
         if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-12) + x1):
             inside = not inside
     return inside
+
 
 def is_inside_fences(lat, lon):
     for f in list_fences():
@@ -902,7 +985,8 @@ def is_inside_fences(lat, lon):
                 outer = gj["geometry"]["coordinates"][0]  # [[lon,lat],...]
                 poly = [[pt[1], pt[0]] for pt in outer]
                 if point_in_polygon(lat, lon, poly): return True
-            except: pass
+            except:
+                pass
     return False
 
 
@@ -910,12 +994,15 @@ def is_inside_fences(lat, lon):
 def on_connect():
     print("🔌 socket connected:", request.sid)
 
+
 @socketio.on('disconnect')
 def on_disconnect():
     print("🔌 socket disconnected:", request.sid)
 
+
 from flask_socketio import emit
 from flask import request
+
 
 @socketio.on('fetch_history')
 def on_fetch_history(payload):
@@ -925,7 +1012,7 @@ def on_fetch_history(payload):
     try:
         takim = payload.get("takim") if isinstance(payload, dict) else None
         start = payload.get("start") if isinstance(payload, dict) else None
-        end   = payload.get("end")   if isinstance(payload, dict) else None
+        end = payload.get("end") if isinstance(payload, dict) else None
         limit = payload.get("limit") if isinstance(payload, dict) else 1000
 
         rows = query_telemetry_history(takim, start, end, limit)
@@ -933,6 +1020,7 @@ def on_fetch_history(payload):
     except Exception as e:
         print("❌ fetch_history hata:", e)
         emit('history_result', {"ok": False, "error": str(e)}, room=request.sid)
+
 
 @socketio.on('fetch_locks')
 def on_fetch_locks(payload):
@@ -949,7 +1037,7 @@ def on_fetch_locks(payload):
         kay = payload.get("kaynak") if isinstance(payload, dict) else None
         dst = payload.get("kilitlenen") if isinstance(payload, dict) else None
         start = payload.get("start") if isinstance(payload, dict) else None
-        end   = payload.get("end")   if isinstance(payload, dict) else None
+        end = payload.get("end") if isinstance(payload, dict) else None
         limit = payload.get("limit") if isinstance(payload, dict) else 1000
 
         rows = query_locks_history(kay, dst, start, end, limit)
@@ -958,6 +1046,7 @@ def on_fetch_locks(payload):
         print("❌ fetch_locks hata:", e)
         emit('locks_result', {"ok": False, "error": str(e)}, room=request.sid)
 
+
 @socketio.on('fetch_kamikaze')
 def on_fetch_kamikaze(payload):
     """
@@ -965,9 +1054,9 @@ def on_fetch_kamikaze(payload):
     """
     try:
         kaynak = payload.get("kaynak") if isinstance(payload, dict) else None
-        start  = payload.get("start")  if isinstance(payload, dict) else None
-        end    = payload.get("end")    if isinstance(payload, dict) else None
-        limit  = payload.get("limit")  if isinstance(payload, dict) else 1000
+        start = payload.get("start") if isinstance(payload, dict) else None
+        end = payload.get("end") if isinstance(payload, dict) else None
+        limit = payload.get("limit") if isinstance(payload, dict) else 1000
 
         rows = query_kamikaze_history(kaynak, start, end, limit)
         emit('kamikaze_result', {"ok": True, "rows": rows, "count": len(rows)}, room=request.sid)
@@ -976,9 +1065,7 @@ def on_fetch_kamikaze(payload):
         emit('kamikaze_result', {"ok": False, "error": str(e)}, room=request.sid)
 
 
-
 if __name__ == "__main__":
     print("DB PATH =", os.path.abspath("iha_logs.db"))
-    init_db()                       # <-- şart
+    init_db()  # <-- şart
     socketio.run(app, host="0.0.0.0", port=10001, debug=True)
-

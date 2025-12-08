@@ -80,6 +80,28 @@
     opacity: 0.4;
   }
 
+  /* HSS Sistem Aktif/Pasif Butonu */
+  .hss-system-toggle {
+    background: #ef4444;
+    border: 2px solid #dc2626;
+    color: white;
+    padding: 12px 20px;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+
+  .hss-system-toggle.active {
+    background: #22c55e;
+    border-color: #16a34a;
+  }
+
+  .hss-system-toggle:hover {
+    transform: scale(1.05);
+  }
+
 
 </style>
 
@@ -560,6 +582,16 @@
     if (rawbox) rawbox.textContent = JSON.stringify({takim, telemetry, sunucusaati}, null, 2);
     setLE(new Date().toLocaleTimeString());
   });
+  
+  // 📡 HSS sistem durumu değişikliği
+  socket.on('hss_system_status', (data) => {
+    console.log("HSS_SYSTEM_STATUS:", data);
+    const btn = document.querySelector('.hss-system-toggle');
+    if (btn && data.hss_aktif !== undefined) {
+      updateHssSystemButton(btn, data.hss_aktif);
+    }
+  });
+  
   // Telemetri tamamen kesilse bile offline'a düşsün diye periyodik redraw
   setInterval(renderTeams, 1000);
 
@@ -998,13 +1030,13 @@
 
     hssLayer.addTo(map);
 
-    // === HSS Aç/Kapa butonu ===
-    const hssControl = L.control({ position: 'topright' });
+    // === HSS Aç/Kapa butonu (Layer göster/gizle) ===
+    const hssControl = L.control({ position: 'topleft' });
 
     hssControl.onAdd = function (map) {
       const btn = L.DomUtil.create('button', 'leaflet-bar hss-toggle-btn');
       btn.type = 'button';
-      btn.innerHTML = 'HSS';
+      btn.innerHTML = 'HSS Layer';
       btn.title = 'HSS göster / gizle';
 
       L.DomEvent.disableClickPropagation(btn);
@@ -1037,6 +1069,70 @@
     };
 
     hssControl.addTo(map);
+
+    // === HSS SİSTEM AKTİF/PASİF BUTONU (Kaçınma kontrolü) ===
+    let hssSystemActive = false; // Başlangıçta PASİF
+    const hssSystemControl = L.control({ position: 'topleft' });
+
+    hssSystemControl.onAdd = function (map) {
+      const btn = L.DomUtil.create('button', 'leaflet-bar hss-system-toggle');
+      btn.type = 'button';
+      btn.innerHTML = '🔴 HSS PASİF';
+      btn.title = 'HSS kaçınma sistemini aktif/pasif yap';
+
+      L.DomEvent.disableClickPropagation(btn);
+
+      L.DomEvent.on(btn, 'click', function (e) {
+        L.DomEvent.stop(e);
+
+        // Toggle
+        hssSystemActive = !hssSystemActive;
+
+        // Sunucuya bildir
+        fetch("/api/hss_toggle", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + (window.AUTH_TOKEN || "fake_token_123")
+          },
+          body: JSON.stringify({ active: hssSystemActive })
+        })
+        .then(r => r.json())
+        .then(data => {
+          console.log('HSS sistem durumu:', data);
+          updateHssSystemButton(btn, data.hss_aktif);
+        })
+        .catch(err => console.error("HSS toggle hata:", err));
+      });
+
+      return btn;
+    };
+
+    function updateHssSystemButton(btn, isActive) {
+        hssSystemActive = isActive;
+
+        // Butonun yazısı
+        if (isActive) {
+            btn.innerHTML = '🟢 HSS AKTİF';
+            btn.classList.add('active');
+        } else {
+            btn.innerHTML = '🔴 HSS PASİF';
+            btn.classList.remove('active');
+        }
+
+        // ⚡ EKLENECEK: Uyarı kutusunu da güncelle
+        const warnBox = document.getElementById("hssWarn");
+        const warnText = document.getElementById("hssWarnText");
+
+        if (!isActive) {
+            // Sistem pasif → uyarı kutusunu kapat
+            warnBox.style.display = "none";
+            warnText.textContent = "";
+        }
+    }
+
+
+    hssSystemControl.addTo(map);
 
     map.setView([39.0, 35.0], 5);
 
